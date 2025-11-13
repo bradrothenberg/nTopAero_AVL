@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ntop-aerodeck"
+version = "1.0.0"
+description = "Automated aerodynamic deck generation from nTop geometry"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "nTop Aero Team"}
+]
+dependencies = [
+    "numpy>=1.21",
+    "pandas>=1.3",
+    "matplotlib>=3.4",
+    "scipy>=1.7",
+    "click>=8.0",
+    "pyyaml>=6.0",
+    "reportlab>=3.6",
+    "jinja2>=3.0",
+    "tqdm>=4.62",
+    "colorama>=0.4.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=3.0",
+    "black>=22.0",
+    "isort>=5.10",
+    "mypy>=0.950",
+    "flake8>=4.0",
+]
+
+[project.scripts]
+aerodeck = "aerodeck.cli:main"
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+addopts = "-v --cov=aerodeck --cov-report=term-missing"

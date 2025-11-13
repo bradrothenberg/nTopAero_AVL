@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nInitial commit: Phase 1 - Core Infrastructure & AVL Integration\n\nImplemented complete Phase 1 functionality:\n\nCore Modules:\n- Geometry loader for nTop CSV exports (mass, LE/TE/winglet/elevon points)\n- Geometry validator with comprehensive checks and warnings\n- AVL translator to convert nTop geometry to AVL input format\n- AVL runner with batch execution and result parsing\n- Verbose logging system with color-coded output and progress bars\n- Configuration management with YAML support\n\nCLI Commands:\n- aerodeck generate: Main pipeline execution\n- aerodeck validate: Geometry validation only\n- aerodeck init-config: Create default configuration\n- aerodeck view: View aerodeck files\n\nTesting:\n- Unit tests for geometry loader\n- Unit tests for AVL translator\n- pytest configuration with coverage\n\nDocumentation:\n- Comprehensive README with quick start guide\n- Inline code documentation with type hints\n- Development plan document\n\nProject Structure:\n- Proper Python package with pyproject.toml\n- Development dependencies and tooling setup\n- .gitignore for Python projects\n\nStatus: Phase 1 Complete ✅\nNext: Phase 2 - XFOIL Integration & Aero Deck Generation\n\n🤖 Generated with Claude Code\nhttps://claude.com/claude-code\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
