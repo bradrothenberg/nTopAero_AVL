@@ -1,4 +1,15 @@
-"""Geometry loading from nTop CSV exports."""
+"""Geometry loading from nTop CSV exports.
+
+Input Units: US Customary (inches, lbm)
+- Geometry coordinates in inches
+- Mass in lbm (pounds mass)
+- Inertia in lbm⋅in²
+
+Output Units: US Customary (feet, lbm) for AVL
+- Geometry converted to feet (divide by 12)
+- Mass stays in lbm
+- Inertia converted to lbm⋅ft² (divide by 144)
+"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,14 +19,18 @@ import pandas as pd
 
 from ..utils.logger import get_logger
 
+# Unit conversion constants
+INCHES_TO_FEET = 1.0 / 12.0  # 1 inch = 1/12 feet
+IN2_TO_FT2 = 1.0 / 144.0  # 1 in² = 1/144 ft²
+
 
 @dataclass
 class MassProperties:
-    """Mass and inertia properties."""
+    """Mass and inertia properties (in feet/lbm for AVL)."""
 
-    mass: float  # kg
-    cg: np.ndarray  # [x, y, z] in meters
-    inertia: np.ndarray  # 3x3 inertia tensor [kg⋅m²]
+    mass: float  # lbm (pounds mass)
+    cg: np.ndarray  # [x, y, z] in feet
+    inertia: np.ndarray  # 3x3 inertia tensor [lbm⋅ft²]
 
     def __post_init__(self) -> None:
         """Validate and convert arrays."""
@@ -131,7 +146,7 @@ class GeometryLoader:
 
         # Load mass properties
         mass_props = self._load_mass_properties(folder / "mass.csv")
-        self.logger.success(f"mass.csv (mass={mass_props.mass:.3f} kg)")
+        self.logger.success(f"mass.csv (mass={mass_props.mass:.3f} lbm)")
 
         # Load panel points
         le_points = self._load_panel_points(folder / "LEpts.csv", "Leading Edge")
@@ -236,7 +251,11 @@ class GeometryLoader:
                 [Ixz, Iyz, Izz],
             ])
 
-            return MassProperties(mass=mass, cg=cg, inertia=inertia)
+            # Convert from inches to feet for AVL
+            cg_ft = cg * INCHES_TO_FEET
+            inertia_ft = inertia * IN2_TO_FT2  # lbm⋅in² to lbm⋅ft²
+
+            return MassProperties(mass=mass, cg=cg_ft, inertia=inertia_ft)
 
         except Exception as e:
             raise ValueError(f"Failed to load mass properties: {e}")
@@ -272,7 +291,10 @@ class GeometryLoader:
             else:
                 raise ValueError("Could not find x, y, z columns")
 
-            return PanelPoints(points=points, label=label)
+            # Convert from inches to feet for AVL
+            points_ft = points * INCHES_TO_FEET
+
+            return PanelPoints(points=points_ft, label=label)
 
         except Exception as e:
             raise ValueError(f"Failed to load panel points from {file_path}: {e}")

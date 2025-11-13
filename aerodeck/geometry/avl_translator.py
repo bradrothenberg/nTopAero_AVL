@@ -1,4 +1,8 @@
-"""Translate nTop geometry to AVL input format."""
+"""Translate nTop geometry to AVL input format.
+
+Units: US Customary (feet, lbm)
+All dimensions in feet for AVL.
+"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,12 +16,12 @@ from ..utils.config import ReferenceConfig
 
 @dataclass
 class ReferenceGeometry:
-    """Reference geometry values for aerodynamic analysis."""
+    """Reference geometry values for aerodynamic analysis (US Customary)."""
 
-    area: float  # Reference area [m²]
-    span: float  # Reference span [m]
-    chord: float  # Mean aerodynamic chord [m]
-    cg: np.ndarray  # Center of gravity [x, y, z] m
+    area: float  # Reference area [ft²]
+    span: float  # Reference span [ft]
+    chord: float  # Mean aerodynamic chord [ft]
+    cg: np.ndarray  # Center of gravity [x, y, z] ft
 
 
 class AVLGeometryWriter:
@@ -61,9 +65,9 @@ class AVLGeometryWriter:
         # Compute reference geometry
         ref_geom = self._compute_reference_geometry(geometry)
 
-        self.logger.debug(f"S_ref = {ref_geom.area:.3f} m²")
-        self.logger.debug(f"b_ref = {ref_geom.span:.3f} m")
-        self.logger.debug(f"c_ref = {ref_geom.chord:.3f} m (MAC)")
+        self.logger.debug(f"S_ref = {ref_geom.area:.3f} ft²")
+        self.logger.debug(f"b_ref = {ref_geom.span:.3f} ft")
+        self.logger.debug(f"c_ref = {ref_geom.chord:.3f} ft (MAC)")
 
         # Write AVL file
         with open(output_path, 'w') as f:

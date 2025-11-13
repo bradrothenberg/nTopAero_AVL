@@ -1,4 +1,8 @@
-"""Geometry validation for aerodynamic analysis."""
+"""Geometry validation for aerodynamic analysis.
+
+Units: US Customary (feet, lbm)
+All dimensions in feet.
+"""
 
 from dataclasses import dataclass
 from typing import Optional
@@ -146,8 +150,8 @@ class GeometryValidator:
         if not np.allclose(mass_props.inertia, mass_props.inertia.T):
             errors.append("Inertia tensor must be symmetric")
 
-        self.logger.debug(f"Mass: {mass_props.mass:.3f} kg")
-        self.logger.debug(f"CG: [{mass_props.cg[0]:.3f}, {mass_props.cg[1]:.3f}, {mass_props.cg[2]:.3f}] m")
+        self.logger.debug(f"Mass: {mass_props.mass:.3f} lbm")
+        self.logger.debug(f"CG: [{mass_props.cg[0]:.3f}, {mass_props.cg[1]:.3f}, {mass_props.cg[2]:.3f}] ft")
 
         return errors, warnings
 
@@ -202,8 +206,8 @@ class GeometryValidator:
                     f"minimum ({self.config.min_aspect_ratio})"
                 )
 
-            self.logger.debug(f"Span: {span:.3f} m")
-            self.logger.debug(f"Mean chord: {mean_chord:.3f} m")
+            self.logger.debug(f"Span: {span:.3f} ft")
+            self.logger.debug(f"Mean chord: {mean_chord:.3f} ft")
             self.logger.debug(f"Aspect ratio: {aspect_ratio:.2f}")
 
         # Check winglet dihedral if present
