@@ -173,6 +173,7 @@ class GeometryLoader:
 
         Expected format:
         - Single row with columns: mass, cg_x, cg_y, cg_z, Ixx, Iyy, Izz, Ixy, Ixz, Iyz
+        - Also supports prefixed columns: avl_mass, avl_CGx, avl_CGy, etc.
 
         Args:
             file_path: Path to mass.csv file
@@ -191,31 +192,43 @@ class GeometryLoader:
 
             row = df.iloc[0]
 
-            # Extract mass and CG
-            mass = float(row.get("mass", row.iloc[0]))
-            cg = np.array([
-                float(row.get("cg_x", row.get("x", row.iloc[1]))),
-                float(row.get("cg_y", row.get("y", row.iloc[2]))),
-                float(row.get("cg_z", row.get("z", row.iloc[3]))),
-            ])
+            # Helper function to find column value with multiple naming conventions
+            def get_value(names: list[str], fallback_idx: int) -> float:
+                for name in names:
+                    if name in row.index:
+                        return float(row[name])
+                # Fallback to column index
+                if fallback_idx < len(row):
+                    return float(row.iloc[fallback_idx])
+                raise ValueError(f"Could not find column for {names}")
+
+            # Extract mass and CG with flexible column naming
+            mass = get_value(["avl_mass", "mass"], 0)
+            cg_x = get_value(["avl_CGx", "cg_x", "x"], 1)
+            cg_y = get_value(["avl_CGy", "cg_y", "y"], 2)
+            cg_z = get_value(["avl_CGz", "cg_z", "z"], 3)
+            cg = np.array([cg_x, cg_y, cg_z])
 
             # Extract inertia tensor (symmetric)
-            # Check multiple possible column naming conventions
-            if "Ixx" in row:
-                Ixx = float(row["Ixx"])
-                Iyy = float(row["Iyy"])
-                Izz = float(row["Izz"])
-                Ixy = float(row.get("Ixy", 0.0))
-                Ixz = float(row.get("Ixz", 0.0))
-                Iyz = float(row.get("Iyz", 0.0))
-            else:
-                # Fallback to column indices
-                Ixx = float(row.iloc[4])
-                Iyy = float(row.iloc[5])
-                Izz = float(row.iloc[6])
-                Ixy = float(row.iloc[7]) if len(row) > 7 else 0.0
-                Ixz = float(row.iloc[8]) if len(row) > 8 else 0.0
-                Iyz = float(row.iloc[9]) if len(row) > 9 else 0.0
+            Ixx = get_value(["avl_Ixx", "Ixx"], 4)
+            Iyy = get_value(["avl_Iyy", "Iyy"], 5)
+            Izz = get_value(["avl_Izz", "Izz"], 6)
+
+            # Products of inertia (optional, default to 0)
+            try:
+                Ixy = get_value(["avl_Ixy", "Ixy"], 7)
+            except (ValueError, IndexError):
+                Ixy = 0.0
+
+            try:
+                Iyz = get_value(["avl_Iyz", "Iyz"], 8)
+            except (ValueError, IndexError):
+                Iyz = 0.0
+
+            try:
+                Ixz = get_value(["avl_Ixz", "Ixz"], 9)
+            except (ValueError, IndexError):
+                Ixz = 0.0
 
             inertia = np.array([
                 [Ixx, Ixy, Ixz],

@@ -68,11 +68,11 @@ class VerboseLogger:
     def _get_prefix(self, level: LogLevel) -> str:
         """Get message prefix based on level."""
         prefix_map = {
-            LogLevel.DEBUG: "  →",
-            LogLevel.INFO: "  →",
-            LogLevel.SUCCESS: "  ✓",
-            LogLevel.WARNING: "  ⚠",
-            LogLevel.ERROR: "  ✗",
+            LogLevel.DEBUG: "  ->",
+            LogLevel.INFO: "  ->",
+            LogLevel.SUCCESS: "  [OK]",
+            LogLevel.WARNING: "  [WARN]",
+            LogLevel.ERROR: "  [ERR]",
         }
         return prefix_map[level]
 
@@ -124,7 +124,7 @@ class VerboseLogger:
         """Log error message."""
         self._log(message, LogLevel.ERROR)
 
-    def header(self, message: str, char: str = "─") -> None:
+    def header(self, message: str, char: str = "-") -> None:
         """
         Print a header with box drawing.
 
@@ -136,14 +136,14 @@ class VerboseLogger:
             return
 
         width = 60
-        print(f"\n┌{char * (width - 2)}┐")
-        print(f"│ {message:<{width - 4}} │")
-        print(f"└{char * (width - 2)}┘")
+        print(f"\n+{char * (width - 2)}+")
+        print(f"| {message:<{width - 4}} |")
+        print(f"+{char * (width - 2)}+")
         self._last_was_progress = False
 
     def section(self, message: str) -> None:
         """Start a new section with indentation."""
-        self.header(message, char="─")
+        self.header(message, char="-")
         self._indent_level = 0
 
     def indent(self) -> None:
@@ -169,12 +169,12 @@ class VerboseLogger:
         percentage = int(100 * current / total) if total > 0 else 0
         bar_length = 40
         filled = int(bar_length * current / total) if total > 0 else 0
-        bar = "█" * filled + "░" * (bar_length - filled)
+        bar = "#" * filled + "." * (bar_length - filled)
 
         timestamp = self._format_timestamp()
         indent = "  " * self._indent_level
 
-        line = f"\r[{timestamp}] {indent}  → {message} [{bar}] {percentage}%"
+        line = f"\r[{timestamp}] {indent}  -> {message} [{bar}] {percentage}%"
 
         # Clear to end of line if previous was progress
         if self._last_was_progress:
@@ -199,7 +199,7 @@ class VerboseLogger:
         if not self.verbose:
             return
 
-        line = "═" * 60
+        line = "=" * 60
         print(f"\n{line}")
         if version:
             print(f"  {title} v{version}")
@@ -219,14 +219,14 @@ class VerboseLogger:
         if not self.verbose:
             return
 
-        line = "═" * 60
+        line = "=" * 60
         print(f"\n{line}")
         print(f"  {message}")
 
         if items:
             print()
             for item in items:
-                print(f"    → {item}")
+                print(f"    -> {item}")
 
         print(f"{line}\n")
         self._last_was_progress = False
