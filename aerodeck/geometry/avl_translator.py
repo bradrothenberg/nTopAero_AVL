@@ -70,8 +70,9 @@ class AVLGeometryWriter:
             self._write_header(f, aircraft_name, ref_geom)
             self._write_main_wing(f, geometry, ref_geom)
 
-            if geometry.winglet:
-                self._write_winglet(f, geometry)
+            # Skip winglet for now - needs better geometry interpretation
+            # if geometry.winglet:
+            #     self._write_winglet(f, geometry)
 
         self.logger.success(f"AVL input written: {output_path.name}")
         self.logger.dedent()
@@ -235,6 +236,10 @@ class AVLGeometryWriter:
         f.write("#Nchordwise  Cspace  [Nspanwise  Sspace]\n")
         f.write("12          1.0\n\n")
 
+        # Y-duplication for symmetric aircraft (mirror across Y=0)
+        f.write("YDUPLICATE\n")
+        f.write("0.0\n\n")
+
         # Write sections
         self._write_sections(
             f,
@@ -265,23 +270,41 @@ class AVLGeometryWriter:
         y_coords = le_pts[:, 1]
         sort_idx = np.argsort(y_coords)
 
-        for i in sort_idx:
+        # Calculate spanwise distances for intelligent panel distribution
+        y_sorted = y_coords[sort_idx]
+
+        for idx, i in enumerate(sort_idx):
             le = le_pts[i]
             te = te_pts[i]
 
             chord = np.linalg.norm(te - le)
 
+            # Compute spanwise panel count proportional to local span
+            # Aim for roughly equal panel sizes spanwise
+            if idx < len(sort_idx) - 1:
+                span_segment = abs(y_sorted[idx + 1] - y_sorted[idx])
+                # Target ~0.5-1m panel width, adjust based on segment length
+                nspan = max(5, min(30, int(span_segment / 2.0) + 1))
+                sspace = 1.0  # Uniform spacing
+            else:
+                nspan = 0
+                sspace = 0
+
             f.write("#" + "-" * 70 + "\n")
             f.write("SECTION\n")
             f.write(f"#Xle    Yle     Zle     Chord   Ainc  [ Nspan  Sspace ]\n")
-            f.write(f"{le[0]:.6f}  {le[1]:.6f}  {le[2]:.6f}  {chord:.6f}  0.0\n\n")
+            if nspan > 0:
+                f.write(f"{le[0]:.6f}  {le[1]:.6f}  {le[2]:.6f}  {chord:.6f}  0.0  {nspan}  {sspace}\n\n")
+            else:
+                f.write(f"{le[0]:.6f}  {le[1]:.6f}  {le[2]:.6f}  {chord:.6f}  0.0\n\n")
 
-            # Airfoil designation (use NACA 0012 as default)
-            f.write("AFIL\n")
-            f.write("0.0 1.0\n\n")  # Flat plate for now
+            # Use NACA 4-digit airfoil (NACA 0012 for symmetric airfoil)
+            # AVL will use its built-in airfoil library for NACA airfoils
+            f.write("NACA\n")
+            f.write("0012\n\n")
 
             # Add control surface if this is near the elevon hinge line
-            if elevon and i > n_sections // 2:  # Outboard sections
+            if elevon and idx > len(sort_idx) // 2:  # Outboard sections
                 f.write("CONTROL\n")
                 f.write("#Cname   Cgain  Xhinge  HingeVec     SgnDup\n")
                 f.write(f"Elevon   1.0    0.75    0. 0. 0.    1.0\n\n")
@@ -315,16 +338,28 @@ class AVLGeometryWriter:
         n_pts = len(pts)
         mid = n_pts // 2
 
-        for i in range(mid):
-            pt = pts[sort_idx[i]]
+        for idx in range(mid):
+            pt = pts[sort_idx[idx]]
             chord = 0.1  # Default small chord for winglet
+
+            # Add spanwise discretization except for last section
+            if idx < mid - 1:
+                nspan = 10  # Fewer panels for winglet
+                sspace = 1.0
+            else:
+                nspan = 0
+                sspace = 0
 
             f.write("SECTION\n")
             f.write(f"#Xle    Yle     Zle     Chord   Ainc\n")
-            f.write(f"{pt[0]:.6f}  {pt[1]:.6f}  {pt[2]:.6f}  {chord:.6f}  0.0\n\n")
+            if nspan > 0:
+                f.write(f"{pt[0]:.6f}  {pt[1]:.6f}  {pt[2]:.6f}  {chord:.6f}  0.0  {nspan}  {sspace}\n\n")
+            else:
+                f.write(f"{pt[0]:.6f}  {pt[1]:.6f}  {pt[2]:.6f}  {chord:.6f}  0.0\n\n")
 
-            f.write("AFIL\n")
-            f.write("0.0 1.0\n\n")
+            # Use NACA 0012 for winglet too
+            f.write("NACA\n")
+            f.write("0012\n\n")
 
     def create_surface_definition(
         self,
