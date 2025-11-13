@@ -191,10 +191,10 @@ def validate(input_dir: Path, verbose: bool) -> None:
         result = validator.validate(geometry)
 
         if result.is_valid:
-            logger.summary("✓ Validation passed")
+            logger.summary("[OK] Validation passed")
             sys.exit(0)
         else:
-            logger.error("✗ Validation failed")
+            logger.error("[ERR] Validation failed")
             sys.exit(1)
 
     except Exception as e:

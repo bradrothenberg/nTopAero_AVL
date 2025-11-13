@@ -183,7 +183,14 @@ class GeometryValidator:
 
         # Calculate span (assuming spanwise is in Y direction)
         y_coords = le_pts[:, 1]  # Y coordinates
-        span = np.max(y_coords) - np.min(y_coords)
+        half_span = np.max(y_coords) - np.min(y_coords)
+
+        # Double if half-span model (all Y coords >= 0 indicates half-span)
+        # When we have YDUPLICATE in AVL, the full span is double the half-span
+        if np.min(y_coords) >= -0.01:  # Tolerance for floating point
+            span = half_span * 2
+        else:
+            span = half_span
 
         if span <= 0:
             errors.append(f"Invalid span: {span}")

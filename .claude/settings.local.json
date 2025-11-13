@@ -10,7 +10,8 @@
       "Bash(aerodeck generate:*)",
       "Bash(git commit:*)",
       "Bash(avl:*)",
-      "Bash(printf:*)"
+      "Bash(printf:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

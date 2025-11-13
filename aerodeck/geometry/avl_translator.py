@@ -72,11 +72,13 @@ class AVLGeometryWriter:
         # Write AVL file
         with open(output_path, 'w') as f:
             self._write_header(f, aircraft_name, ref_geom)
+
+            # Write main wing with integrated control surfaces
             self._write_main_wing(f, geometry, ref_geom)
 
-            # Skip winglet for now - needs better geometry interpretation
-            # if geometry.winglet:
-            #     self._write_winglet(f, geometry)
+            # Write winglet as vertical surface
+            if geometry.winglet:
+                self._write_winglet(f, geometry.winglet)
 
         self.logger.success(f"AVL input written: {output_path.name}")
         self.logger.dedent()
@@ -167,16 +169,17 @@ class AVLGeometryWriter:
             le_pts: Leading edge points
 
         Returns:
-            Wingspan [m]
+            Wingspan [ft] (full span, doubled if half-span model)
         """
         y_coords = le_pts[:, 1]
-        span = np.max(y_coords) - np.min(y_coords)
+        half_span = np.max(y_coords) - np.min(y_coords)
 
-        # Double if half-span model
-        if np.min(y_coords) >= -0.01:
-            span *= 2
+        # Double if half-span model (all Y coords >= 0 indicates half-span)
+        # When we have YDUPLICATE, we need to report the full span
+        if np.min(y_coords) >= -0.01:  # Tolerance for floating point
+            return abs(half_span * 2)
 
-        return abs(span)
+        return abs(half_span)
 
     def _compute_mac(
         self,
@@ -244,12 +247,12 @@ class AVLGeometryWriter:
         f.write("YDUPLICATE\n")
         f.write("0.0\n\n")
 
-        # Write sections
+        # Write sections with elevon control surface integrated
         self._write_sections(
             f,
             geometry.leading_edge.points,
             geometry.trailing_edge.points,
-            geometry.elevon
+            geometry.elevon  # Add control surface to outboard sections
         )
 
     def _write_sections(
@@ -284,11 +287,12 @@ class AVLGeometryWriter:
             chord = np.linalg.norm(te - le)
 
             # Compute spanwise panel count proportional to local span
-            # Aim for roughly equal panel sizes spanwise
+            # Aim for roughly equal panel sizes spanwise (~0.4-0.5 ft per panel)
             if idx < len(sort_idx) - 1:
                 span_segment = abs(y_sorted[idx + 1] - y_sorted[idx])
-                # Target ~0.5-1m panel width, adjust based on segment length
-                nspan = max(5, min(30, int(span_segment / 2.0) + 1))
+                # Target ~0.4 ft (5 inches) panel width for more uniform distribution
+                target_panel_width = 0.4  # ft
+                nspan = max(3, min(40, int(round(span_segment / target_panel_width))))
                 sspace = 1.0  # Uniform spacing
             else:
                 nspan = 0
@@ -313,55 +317,153 @@ class AVLGeometryWriter:
                 f.write("#Cname   Cgain  Xhinge  HingeVec     SgnDup\n")
                 f.write(f"Elevon   1.0    0.75    0. 0. 0.    1.0\n\n")
 
+    def _interpret_clockwise_panel(self, pts: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Interpret a clockwise panel outline and extract LE/TE edges.
+
+        For a quadrilateral panel in clockwise notation starting from root LE:
+        - Points: [root_LE, tip_LE, tip_TE, root_TE]
+        - LE edge: points 0, 1 (root to tip)
+        - TE edge: points 3, 2 (root to tip, reversed order)
+
+        For more complex panels, we identify LE/TE by X-coordinate.
+
+        Args:
+            pts: Panel points in clockwise order
+
+        Returns:
+            Tuple of (le_points, te_points)
+        """
+        # Remove duplicate closing point if present
+        if len(pts) > 3 and np.allclose(pts[0], pts[-1]):
+            pts = pts[:-1]
+
+        if len(pts) == 4:
+            # Quadrilateral: clockwise from root LE
+            # [root_LE, tip_LE, tip_TE, root_TE]
+            le_pts = np.array([pts[0], pts[1]])  # Root LE to Tip LE
+            te_pts = np.array([pts[3], pts[2]])  # Root TE to Tip TE
+            return le_pts, te_pts
+        else:
+            # More complex shape: split by X coordinate
+            # Forward half (min X) is LE, aft half (max X) is TE
+            n = len(pts)
+            mid = n // 2
+
+            # Sort by X to identify forward/aft
+            x_coords = pts[:, 0]
+            if np.max(x_coords[:mid]) < np.min(x_coords[mid:]):
+                # First half is forward (LE), second half is aft (TE)
+                le_pts = pts[:mid]
+                te_pts = pts[mid:][::-1]  # Reverse to match spanwise order
+            else:
+                # Need more sophisticated splitting
+                # Find the two points with min/max X
+                min_x_idx = np.argmin(x_coords)
+                max_x_idx = np.argmax(x_coords)
+
+                # Split at these points
+                if min_x_idx < max_x_idx:
+                    le_pts = pts[min_x_idx:max_x_idx+1]
+                    te_pts = np.vstack([pts[max_x_idx:], pts[:min_x_idx+1]])
+                else:
+                    le_pts = np.vstack([pts[min_x_idx:], pts[:max_x_idx+1]])
+                    te_pts = pts[max_x_idx:min_x_idx+1]
+
+            return le_pts, te_pts
+
+    def _write_elevon(
+        self,
+        f: TextIO,
+        elevon: PanelPoints
+    ) -> None:
+        """Write elevon control surface as a separate movable surface."""
+        f.write("#" + "-" * 70 + "\n")
+        f.write("SURFACE\n")
+        f.write("Elevon\n\n")
+
+        f.write("#Nchordwise  Cspace  [Nspanwise  Sspace]\n")
+        f.write("8          1.0\n\n")
+
+        # Y-duplication for symmetric aircraft
+        f.write("YDUPLICATE\n")
+        f.write("0.0\n\n")
+
+        # Interpret clockwise panel notation
+        le_pts, te_pts = self._interpret_clockwise_panel(elevon.points)
+
+        # Write sections
+        self._write_sections(f, le_pts, te_pts, None)
+
     def _write_winglet(
         self,
         f: TextIO,
-        geometry: GeometryData
+        winglet: PanelPoints
     ) -> None:
-        """Write winglet surface definition."""
-        if not geometry.winglet:
-            return
+        """
+        Write winglet surface definition.
 
+        Winglet is a vertical surface, so we sort by Z (height) rather than Y (span).
+        The winglet polygon defines sections at different heights.
+        """
         f.write("#" + "-" * 70 + "\n")
         f.write("SURFACE\n")
         f.write("Winglet\n\n")
 
-        f.write("#Nchordwise  Cspace\n")
-        f.write("10          1.0\n\n")
+        f.write("#Nchordwise  Cspace  [Nspanwise  Sspace]\n")
+        f.write("8          1.0\n\n")
 
-        # Write winglet sections
-        # For winglets, we need to infer LE/TE from the point cloud
-        # This is a simplified approach
-        pts = geometry.winglet.points
+        # Y-duplication for symmetric aircraft
+        f.write("YDUPLICATE\n")
+        f.write("0.0\n\n")
 
-        # Sort by height (Z coordinate)
+        # For winglet: interpret as vertical surface
+        # Group points by Z coordinate to find sections at each height
+        pts = winglet.points
+
+        # Remove closing point if present
+        if len(pts) > 3 and np.allclose(pts[0], pts[-1]):
+            pts = pts[:-1]
+
+        # Group points by Z level (rounded to avoid floating point issues)
         z_coords = pts[:, 2]
-        sort_idx = np.argsort(z_coords)
+        z_rounded = np.round(z_coords, 2)
+        unique_z = np.unique(z_rounded)
 
-        # Assume first half is LE, second half is TE (may need refinement)
-        n_pts = len(pts)
-        mid = n_pts // 2
+        # Create sections at each Z level (sorted bottom to top)
+        unique_z_sorted = np.sort(unique_z)
 
-        for idx in range(mid):
-            pt = pts[sort_idx[idx]]
-            chord = 0.1  # Default small chord for winglet
+        for idx, z_level in enumerate(unique_z_sorted):
+            # Get all points at this Z level
+            mask = np.abs(z_rounded - z_level) < 0.01
+            level_pts = pts[mask]
 
-            # Add spanwise discretization except for last section
-            if idx < mid - 1:
-                nspan = 10  # Fewer panels for winglet
+            # Sort by X coordinate (forward to aft)
+            x_sort_idx = np.argsort(level_pts[:, 0])
+            level_pts_sorted = level_pts[x_sort_idx]
+
+            # LE is forward-most, TE is aft-most
+            le = level_pts_sorted[0]
+            te = level_pts_sorted[-1]
+            chord = np.linalg.norm(te - le)
+
+            # Compute vertical span to next section
+            if idx < len(unique_z_sorted) - 1:
+                z_span = abs(unique_z_sorted[idx + 1] - z_level)
+                nspan = max(3, min(15, int(round(z_span / 0.5))))  # ~0.5 ft panels
                 sspace = 1.0
             else:
                 nspan = 0
                 sspace = 0
 
+            f.write("#" + "-" * 70 + "\n")
             f.write("SECTION\n")
-            f.write(f"#Xle    Yle     Zle     Chord   Ainc\n")
+            f.write(f"#Xle    Yle     Zle     Chord   Ainc  [ Nspan  Sspace ]\n")
             if nspan > 0:
-                f.write(f"{pt[0]:.6f}  {pt[1]:.6f}  {pt[2]:.6f}  {chord:.6f}  0.0  {nspan}  {sspace}\n\n")
+                f.write(f"{le[0]:.6f}  {le[1]:.6f}  {le[2]:.6f}  {chord:.6f}  0.0  {nspan}  {sspace}\n\n")
             else:
-                f.write(f"{pt[0]:.6f}  {pt[1]:.6f}  {pt[2]:.6f}  {chord:.6f}  0.0\n\n")
+                f.write(f"{le[0]:.6f}  {le[1]:.6f}  {le[2]:.6f}  {chord:.6f}  0.0\n\n")
 
-            # Use NACA 0012 for winglet too
             f.write("NACA\n")
             f.write("0012\n\n")
 
