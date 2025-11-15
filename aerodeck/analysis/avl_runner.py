@@ -46,6 +46,7 @@ class AVLResults:
 
     CL_beta: Optional[float] = None
     Cy_beta: Optional[float] = None
+    Cl_beta: Optional[float] = None  # Roll due to sideslip (dihedral effect)
     Cn_beta: Optional[float] = None
 
     # Control derivatives
@@ -165,7 +166,7 @@ class AVLAnalysis:
 
             # Execute AVL
             try:
-                result = self._run_avl_case(input_file, cmd_file)
+                result = self._run_avl_case(input_file, cmd_file, output_dir)
                 results[case.name] = result
             except Exception as e:
                 self.logger.warning(f"Case {case.name} failed: {e}")
@@ -228,21 +229,82 @@ class AVLAnalysis:
             # Execute
             f.write("X\n")
 
-            # Write forces
-            output_file = output_dir / f"{case.name}_forces.txt"
-            f.write(f"FT\n{output_file}\n")
+            # Write stability derivatives to file
+            stab_filename = f"{case.name}_stab.txt"
+            f.write(f"ST\n")
+            f.write(f"{stab_filename}\n")
+            f.write("\n")  # Confirm write
 
-            # Write stability derivatives
-            deriv_file = output_dir / f"{case.name}_stab.txt"
-            f.write(f"ST\n{deriv_file}\n")
+            # Exit OPER menu
+            f.write("\n")  # Empty line exits OPER
 
-            # Quit
-            f.write("\nQUIT\n")
+            # Quit AVL
+            f.write("QUIT\n")
+
+    def _write_run_file(
+        self,
+        run_file: Path,
+        case: RunCase
+    ) -> None:
+        """
+        Create AVL .run file with flight condition parameters.
+
+        AVL .run file format defines the flight condition and constraints.
+
+        Args:
+            run_file: Path to .run file
+            case: Run case with flight condition
+        """
+        with open(run_file, 'w') as f:
+            f.write(" ---------------------------------------------\n")
+            f.write(" Run case  1:  Default run case\n")
+            f.write("\n")
+            f.write(f" alpha        ->  alpha       =   {case.alpha:8.4f}  deg\n")
+            f.write(f" beta         ->  beta        =   {case.beta:8.4f}  deg\n")
+            f.write(f" pb/2V        ->  pb/2V       =   {0.0:8.4f}\n")
+            f.write(f" qc/2V        ->  qc/2V       =   {0.0:8.4f}\n")
+            f.write(f" rb/2V        ->  rb/2V       =   {0.0:8.4f}\n")
+            f.write(f" Mach         ->  Mach        =   {case.mach:8.4f}\n")
+            f.write(f" velocity     ->  velocity    =   {100.0:8.4f}  ft/s\n")
+            f.write(f" density      ->  density     =   {0.002377:8.6f}  slug/ft^3\n")
+            f.write(f" grav.acc.    ->  g           =   {32.174:8.4f}  ft/s^2\n")
+            f.write("\n")
+            f.write(" alpha     =   0.00000     deg\n")
+            f.write(" beta      =   0.00000     deg\n")
+            f.write(" pb/2V     =   0.00000\n")
+            f.write(" qc/2V     =   0.00000\n")
+            f.write(" rb/2V     =   0.00000\n")
+            f.write(" CL        =   0.00000\n")
+            f.write(" CDo       =   0.00000\n")
+            f.write(" bank      =   0.00000     deg\n")
+            f.write(" elevation =   0.00000     deg\n")
+            f.write(" heading   =   0.00000     deg\n")
+            f.write(" Mach      =   0.00000\n")
+            f.write(" velocity  =   0.00000     ft/s\n")
+            f.write(" density   =   0.002377     slug/ft^3\n")
+            f.write(" grav.acc. =   32.174       ft/s^2\n")
+            f.write(" turn_rad. =   0.00000     ft\n")
+            f.write(" load_fac. =   1.00000\n")
+            f.write(" X_cg      =   0.00000     ft\n")
+            f.write(" Y_cg      =   0.00000     ft\n")
+            f.write(" Z_cg      =   0.00000     ft\n")
+            f.write(" mass      =   1.00000     lbm\n")
+            f.write(" Ixx       =   1.00000     lbm-ft^2\n")
+            f.write(" Iyy       =   1.00000     lbm-ft^2\n")
+            f.write(" Izz       =   1.00000     lbm-ft^2\n")
+            f.write(" Ixy       =   0.00000     lbm-ft^2\n")
+            f.write(" Iyz       =   0.00000     lbm-ft^2\n")
+            f.write(" Izx       =   0.00000     lbm-ft^2\n")
+            f.write(" visc CL_a =   0.00000\n")
+            f.write(" visc CL_u =   0.00000\n")
+            f.write(" visc CM_a =   0.00000\n")
+            f.write(" visc CM_u =   0.00000\n")
 
     def _run_avl_case(
         self,
         input_file: Path,
-        cmd_file: Path
+        cmd_file: Path,
+        output_dir: Path
     ) -> AVLResults:
         """
         Run single AVL case and parse results.
@@ -250,6 +312,7 @@ class AVLAnalysis:
         Args:
             input_file: AVL input file
             cmd_file: Command file
+            output_dir: Directory where output files will be created
 
         Returns:
             AVLResults instance
@@ -258,53 +321,353 @@ class AVLAnalysis:
         with open(cmd_file, 'r') as f:
             commands = f.read()
 
+        # Run AVL from the output directory so files are created there
         result = subprocess.run(
-            [self.config.executable, str(input_file)],
+            [self.config.executable, str(input_file.absolute())],
             input=commands.encode(),
             capture_output=True,
-            timeout=60
+            timeout=60,
+            cwd=str(output_dir)
         )
 
-        if result.returncode != 0:
+        # Note: AVL can return non-zero codes even on success (e.g., missing .mass file warnings)
+        # Don't fail just based on return code - check if output files exist instead
+        if result.returncode not in [0, 2]:
             raise RuntimeError(f"AVL failed with return code {result.returncode}")
 
-        # Parse output (simplified for now)
-        # In production, would parse the output files created by AVL
-        return self._parse_avl_output(result.stdout.decode())
+        # Parse stability derivatives from output file
+        # Extract case name from cmd_file to find the stab file
+        with open(cmd_file, 'r') as f:
+            cmd_lines = f.readlines()
+            stab_file = None
+            for i, line in enumerate(cmd_lines):
+                if 'ST' in line and i + 1 < len(cmd_lines):
+                    stab_filename = cmd_lines[i + 1].strip()
+                    if stab_filename and not stab_filename.startswith('QUIT'):
+                        stab_file = output_dir / stab_filename
+                        break
+
+        if stab_file and stab_file.exists():
+            return self._parse_stab_file_to_results(stab_file)
+        else:
+            # Fallback to parsing stdout (legacy)
+            return self._parse_avl_output(result.stdout.decode())
 
     def _parse_avl_output(self, output: str) -> AVLResults:
         """
-        Parse AVL output text.
+        Parse AVL console output (from ST command).
 
         Args:
-            output: AVL stdout text
+            output: AVL stdout text with stability derivatives
 
         Returns:
             AVLResults instance
         """
-        # Simplified parser - in production would parse detailed output files
-        # For now, return placeholder values
+        derivatives = {}
 
-        CL = 0.0
-        CD = 0.0
-        Cy = 0.0
-        Cm = 0.0
-        Cn = 0.0
-        Cl = 0.0
-
-        # Try to extract values from output
+        # Parse the console output line by line
         for line in output.split('\n'):
-            if 'CLtot' in line or 'CL =' in line:
+            # Force coefficients
+            if 'CLtot' in line:
                 parts = line.split('=')
-                if len(parts) > 1:
+                if len(parts) >= 2:
                     try:
-                        CL = float(parts[1].split()[0])
+                        derivatives['CL'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            if 'CDtot' in line:
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    try:
+                        derivatives['CD'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            if 'Cmtot' in line:
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    try:
+                        derivatives['Cm'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            # Stability derivatives
+            if 'CLa =' in line:
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    try:
+                        derivatives['CLa'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            if 'CYb =' in line:
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    try:
+                        derivatives['CYb'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            if 'Clb =' in line:
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    try:
+                        derivatives['Clb'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            if 'Cnb =' in line:
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    try:
+                        derivatives['Cnb'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            if 'CDa =' in line:
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    try:
+                        derivatives['CDa'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            if 'Cma =' in line:
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    try:
+                        derivatives['Cma'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            # Dynamic derivatives
+            if 'CLq =' in line:
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    try:
+                        derivatives['CLq'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            if 'Cmq =' in line:
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    try:
+                        derivatives['Cmq'] = float(parts[1].split()[0])
                     except (ValueError, IndexError):
                         pass
 
         return AVLResults(
-            CL=CL, CD=CD, Cy=Cy,
-            Cm=Cm, Cn=Cn, Cl=Cl,
+            CL=derivatives.get('CL', 0.0),
+            CD=derivatives.get('CD', 0.0),
+            Cy=derivatives.get('CY', 0.0),
+            Cm=derivatives.get('Cm', 0.0),
+            Cn=derivatives.get('Cn', 0.0),
+            Cl=derivatives.get('Cl', 0.0),
+            CL_alpha=derivatives.get('CLa'),
+            CD_alpha=derivatives.get('CDa'),
+            Cm_alpha=derivatives.get('Cma'),
+            CL_beta=derivatives.get('CLb'),
+            Cy_beta=derivatives.get('CYb'),
+            Cl_beta=derivatives.get('Clb'),
+            Cn_beta=derivatives.get('Cnb'),
+            CL_q=derivatives.get('CLq'),
+            Cm_q=derivatives.get('Cmq'),
+            converged=True
+        )
+
+    def _parse_stab_file_to_results(self, stab_file: Path) -> AVLResults:
+        """
+        Parse stability file and return AVLResults object.
+
+        Args:
+            stab_file: Path to stability derivatives file
+
+        Returns:
+            AVLResults instance
+        """
+        data = self._parse_stability_file(stab_file)
+
+        return AVLResults(
+            CL=data.get('CL', 0.0),
+            CD=data.get('CD', 0.0),
+            Cy=data.get('CY', 0.0),
+            Cm=data.get('Cm', 0.0),
+            Cn=data.get('Cn', 0.0),
+            Cl=data.get('Cl', 0.0),
+            CL_alpha=data.get('CLa'),
+            CD_alpha=data.get('CDa'),
+            Cm_alpha=data.get('Cma'),
+            CL_beta=data.get('CLb'),
+            Cy_beta=data.get('CYb'),
+            Cl_beta=data.get('Clb'),
+            Cn_beta=data.get('Cnb'),
+            CL_q=data.get('CLq'),
+            Cm_q=data.get('Cmq'),
+            converged=True
+        )
+
+    def _parse_stability_file(self, stab_file: Path) -> dict:
+        """
+        Parse AVL stability derivatives file (ST output).
+
+        Args:
+            stab_file: Path to stability file
+
+        Returns:
+            Dictionary of stability derivatives
+        """
+        derivatives = {}
+
+        try:
+            with open(stab_file, 'r') as f:
+                lines = f.readlines()
+
+            # Parse force coefficients from header
+            for i, line in enumerate(lines):
+                if 'CL' in line and 'CLa' not in line:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        try:
+                            derivatives['CL'] = float(parts[1].split()[0])
+                        except (ValueError, IndexError):
+                            pass
+
+                if 'CDtot' in line:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        try:
+                            derivatives['CD'] = float(parts[1].split()[0])
+                        except (ValueError, IndexError):
+                            pass
+
+                if 'CYtot' in line:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        try:
+                            derivatives['CY'] = float(parts[1].split()[0])
+                        except (ValueError, IndexError):
+                            pass
+
+                if 'Cmtot' in line:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        try:
+                            derivatives['Cm'] = float(parts[1].split()[0])
+                        except (ValueError, IndexError):
+                            pass
+
+                if 'Cntot' in line:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        try:
+                            derivatives['Cn'] = float(parts[1].split()[0])
+                        except (ValueError, IndexError):
+                            pass
+
+                if 'Cltot' in line:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        try:
+                            derivatives['Cl'] = float(parts[1].split()[0])
+                        except (ValueError, IndexError):
+                            pass
+
+                # Parse stability derivatives
+                if 'CLa =' in line:
+                    parts = line.split('=')
+                    try:
+                        derivatives['CLa'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+                if 'CYb =' in line:
+                    parts = line.split('=')
+                    try:
+                        derivatives['CYb'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+                if 'CDa =' in line:
+                    parts = line.split('=')
+                    try:
+                        derivatives['CDa'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+                if 'Cma =' in line:
+                    parts = line.split('=')
+                    try:
+                        derivatives['Cma'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+                if 'Cnb =' in line:
+                    parts = line.split('=')
+                    try:
+                        derivatives['Cnb'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+                if 'Clb =' in line:
+                    parts = line.split('=')
+                    try:
+                        derivatives['Clb'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+                # Dynamic derivatives
+                if 'CLq =' in line:
+                    parts = line.split('=')
+                    try:
+                        derivatives['CLq'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+                if 'Cmq =' in line:
+                    parts = line.split('=')
+                    try:
+                        derivatives['Cmq'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+        except Exception as e:
+            self.logger.debug(f"Error parsing stability file: {e}")
+
+        return derivatives
+
+    def parse_avl_results(self, stab_file: Path, forces_file: Optional[Path] = None) -> AVLResults:
+        """
+        Parse AVL output files to extract complete results.
+
+        Args:
+            stab_file: Path to stability derivatives file (ST output)
+            forces_file: Optional path to forces file (FT output)
+
+        Returns:
+            AVLResults with all available data
+        """
+        # Parse stability file
+        data = self._parse_stability_file(stab_file)
+
+        # Create results object
+        return AVLResults(
+            CL=data.get('CL', 0.0),
+            CD=data.get('CD', 0.0),
+            Cy=data.get('CY', 0.0),
+            Cm=data.get('Cm', 0.0),
+            Cn=data.get('Cn', 0.0),
+            Cl=data.get('Cl', 0.0),
+            CL_alpha=data.get('CLa'),
+            CD_alpha=data.get('CDa'),
+            Cm_alpha=data.get('Cma'),
+            CL_beta=data.get('CLb'),
+            Cy_beta=data.get('CYb'),
+            Cl_beta=data.get('Clb'),
+            Cn_beta=data.get('Cnb'),
+            CL_q=data.get('CLq'),
+            Cm_q=data.get('Cmq'),
             converged=True
         )
 

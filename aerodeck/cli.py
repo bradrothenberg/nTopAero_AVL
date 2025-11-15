@@ -141,19 +141,75 @@ def generate(
         # Compute derivatives
         stability = avl_runner.compute_stability_derivatives(results)
 
+        # Use results from first case (trim condition)
+        first_case_name = run_cases[0].name
+        avl_results = results.get(first_case_name)
+
+        if avl_results:
+            logger.debug(f"AVL Results: CL_alpha={avl_results.CL_alpha}, Cm_alpha={avl_results.Cm_alpha}")
+        else:
+            logger.warning(f"No AVL results found for case {first_case_name}")
+
+        # Phase 5: Generate AeroDeck
+        logger.section("Phase 5: AeroDeck Generation")
+
+        from .output.aerodeck import (
+            AeroDeck, ReferenceGeometry, MassProperties
+        )
+
+        # Create reference geometry
+        ref_geometry = ReferenceGeometry(
+            S_ref=ref_geom.area,
+            b_ref=ref_geom.span,
+            c_ref=ref_geom.chord,
+            x_ref=geometry.mass_properties.cg[0],
+            y_ref=geometry.mass_properties.cg[1],
+            z_ref=geometry.mass_properties.cg[2]
+        )
+
+        # Create mass properties (extract from inertia tensor)
+        inertia = geometry.mass_properties.inertia
+        mass_props = MassProperties(
+            mass=geometry.mass_properties.mass,
+            cg_x=geometry.mass_properties.cg[0],
+            cg_y=geometry.mass_properties.cg[1],
+            cg_z=geometry.mass_properties.cg[2],
+            Ixx=inertia[0, 0],
+            Iyy=inertia[1, 1],
+            Izz=inertia[2, 2],
+            Ixy=inertia[0, 1],
+            Ixz=inertia[0, 2],
+            Iyz=inertia[1, 2]
+        )
+
+        # Create aerodeck
+        aerodeck = AeroDeck.from_avl_results(
+            aircraft_name=aircraft_name,
+            avl_results=avl_results,
+            reference_geometry=ref_geometry,
+            mass_properties=mass_props
+        )
+
+        # Save aerodeck JSON
+        aerodeck_file = output_dir / f"{aircraft_name.replace(' ', '_').lower()}_aerodeck.json"
+        aerodeck.save_json(aerodeck_file)
+        logger.success(f"Saved aerodeck: {aerodeck_file.name}")
+
         # Print summary
         logger.summary(
             "Analysis complete!",
             [
-                f"AVL input file: {avl_file}",
+                f"AVL input file: {avl_file.name}",
+                f"Aerodeck file: {aerodeck_file.name}",
                 f"Number of cases: {len(results)}",
-                f"Reference area: {ref_geom.area:.3f} m²",
-                f"Reference span: {ref_geom.span:.3f} m",
-                f"Reference chord: {ref_geom.chord:.3f} m",
+                f"Reference area: {ref_geom.area:.3f} ft²",
+                f"Reference span: {ref_geom.span:.3f} ft",
+                f"Reference chord: {ref_geom.chord:.3f} ft",
                 "",
                 "Key stability derivatives:",
-                f"  CL_α = {stability.CL_alpha:.3f} /rad" if stability.CL_alpha else "  CL_α = (not computed)",
-                f"  Cm_α = {stability.Cm_alpha:.3f} /rad" if stability.Cm_alpha else "  Cm_α = (not computed)",
+                f"  CL_a = {avl_results.CL_alpha:.3f} /rad" if avl_results.CL_alpha else "  CL_a = (not computed)",
+                f"  Cm_a = {avl_results.Cm_alpha:.3f} /rad" if avl_results.Cm_alpha else "  Cm_a = (not computed)",
+                f"  CL_q = {avl_results.CL_q:.5f} /rad" if avl_results.CL_q else "  CL_q = (not computed)",
             ]
         )
 
@@ -262,6 +318,111 @@ def view(deck_file: Path) -> None:
 
     except Exception as e:
         logger.error(f"Failed to view deck: {e}")
+        sys.exit(1)
+
+
+@main.command()
+@click.option(
+    '--naca',
+    default='0012',
+    help='NACA 4-digit airfoil code (default: 0012)'
+)
+@click.option(
+    '--reynolds',
+    '-re',
+    multiple=True,
+    type=float,
+    help='Reynolds numbers to analyze (can specify multiple times)'
+)
+@click.option(
+    '--alpha-min',
+    default=-10.0,
+    help='Minimum angle of attack [deg]'
+)
+@click.option(
+    '--alpha-max',
+    default=20.0,
+    help='Maximum angle of attack [deg]'
+)
+@click.option(
+    '--alpha-step',
+    default=0.5,
+    help='Angle of attack increment [deg]'
+)
+@click.option(
+    '--mach',
+    default=0.0,
+    help='Mach number'
+)
+@click.option(
+    '--output',
+    '-o',
+    type=click.Path(path_type=Path),
+    default=Path('polars'),
+    help='Output directory for polar files'
+)
+@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+def generate_polars(
+    naca: str,
+    reynolds: tuple,
+    alpha_min: float,
+    alpha_max: float,
+    alpha_step: float,
+    mach: float,
+    output: Path,
+    verbose: bool
+) -> None:
+    """
+    Generate airfoil polars using XFOIL.
+
+    Examples:
+        aerodeck generate-polars --naca 0012 -re 1e6 -re 5e6
+        aerodeck generate-polars --naca 2412 -re 1e6 --alpha-min -5 --alpha-max 15
+    """
+    from .analysis.xfoil_runner import XFOILRunner
+
+    logger = get_logger(verbose=verbose)
+
+    # Use default Reynolds numbers if none specified
+    if not reynolds:
+        reynolds = (1e6, 5e6, 1e7)
+
+    try:
+        logger.info("=" * 60)
+        logger.info(f"  XFOIL Polar Generation")
+        logger.info("=" * 60)
+        logger.info(f"Airfoil: NACA {naca}")
+        logger.info(f"Reynolds: {', '.join([f'{r:.2e}' for r in reynolds])}")
+        logger.info(f"Alpha range: {alpha_min}° to {alpha_max}° (step {alpha_step}°)")
+        logger.info(f"Mach: {mach}")
+        logger.info("")
+
+        # Create XFOIL runner
+        xfoil = XFOILRunner(verbose=verbose)
+
+        # Generate polars
+        polars = xfoil.generate_naca_polar(
+            naca_code=naca,
+            reynolds_numbers=list(reynolds),
+            alpha_range=(alpha_min, alpha_max),
+            alpha_step=alpha_step,
+            mach=mach
+        )
+
+        # Save polars
+        xfoil.save_polars(polars, output)
+
+        logger.info("")
+        logger.info("=" * 60)
+        logger.success(f"Polar generation complete!")
+        logger.info(f"Output: {output.absolute()}")
+        logger.info("=" * 60)
+
+    except Exception as e:
+        logger.error(f"Polar generation failed: {e}")
+        if verbose:
+            import traceback
+            traceback.print_exc()
         sys.exit(1)
 
 

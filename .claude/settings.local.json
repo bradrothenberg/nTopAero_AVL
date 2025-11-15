@@ -11,7 +11,16 @@
       "Bash(git commit:*)",
       "Bash(avl:*)",
       "Bash(printf:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(where:*)",
+      "Bash(aerodeck generate-polars:*)",
+      "Bash(timeout 60 aerodeck generate:*)",
+      "Bash(aerodeck view:*)",
+      "Bash(ls:*)",
+      "Bash(timeout 10 avl:*)",
+      "Bash(timeout 120 aerodeck generate:*)",
+      "Bash(pipeline_test.log)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

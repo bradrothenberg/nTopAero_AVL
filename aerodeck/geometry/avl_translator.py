@@ -81,6 +81,12 @@ class AVLGeometryWriter:
                 self._write_winglet(f, geometry.winglet)
 
         self.logger.success(f"AVL input written: {output_path.name}")
+
+        # Write mass file
+        mass_file = output_path.with_suffix('.mass')
+        self._write_mass_file(mass_file, geometry, ref_geom)
+        self.logger.success(f"Mass file written: {mass_file.name}")
+
         self.logger.dedent()
 
         return ref_geom
@@ -247,12 +253,13 @@ class AVLGeometryWriter:
         f.write("YDUPLICATE\n")
         f.write("0.0\n\n")
 
-        # Write sections with elevon control surface integrated
+        # Write sections without control surface for now (TODO: fix control surface setup)
+        # Control surfaces cause "Illegal constraint index" error in AVL
         self._write_sections(
             f,
             geometry.leading_edge.points,
             geometry.trailing_edge.points,
-            geometry.elevon  # Add control surface to outboard sections
+            None  # Disable elevon control surface temporarily
         )
 
     def _write_sections(
@@ -279,6 +286,9 @@ class AVLGeometryWriter:
 
         # Calculate spanwise distances for intelligent panel distribution
         y_sorted = y_coords[sort_idx]
+
+        # Determine where to place elevon control surface (outboard sections only)
+        elevon_start_idx = len(sort_idx) // 2 if elevon else len(sort_idx)
 
         for idx, i in enumerate(sort_idx):
             le = le_pts[i]
@@ -311,11 +321,13 @@ class AVLGeometryWriter:
             f.write("NACA\n")
             f.write("0012\n\n")
 
-            # Add control surface if this is near the elevon hinge line
-            if elevon and idx > len(sort_idx) // 2:  # Outboard sections
+            # Add control surface ONLY at the first outboard section
+            # SgnDup = -1.0 means opposite deflection on mirrored side (for roll control)
+            # SgnDup = +1.0 means same deflection on mirrored side (for pitch control)
+            if elevon and idx == elevon_start_idx:
                 f.write("CONTROL\n")
                 f.write("#Cname   Cgain  Xhinge  HingeVec     SgnDup\n")
-                f.write(f"Elevon   1.0    0.75    0. 0. 0.    1.0\n\n")
+                f.write(f"Elevon   1.0    0.75    0. 0. 0.    -1.0\n\n")
 
     def _interpret_clockwise_panel(self, pts: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -466,6 +478,43 @@ class AVLGeometryWriter:
 
             f.write("NACA\n")
             f.write("0012\n\n")
+
+    def _write_mass_file(
+        self,
+        mass_file: Path,
+        geometry: GeometryData,
+        ref_geom: ReferenceGeometry
+    ) -> None:
+        """
+        Write AVL .mass file with mass and inertia properties.
+
+        AVL .mass file format:
+        #  mass   x       y       z       Ixx     Iyy     Izz     Ixy     Ixz     Iyz
+        Units: Lunit, Munit  (from .avl file - we use feet and lbm)
+
+        Args:
+            mass_file: Path to .mass file
+            geometry: Geometry data with mass properties
+            ref_geom: Reference geometry
+        """
+        mass_props = geometry.mass_properties
+        inertia = mass_props.inertia
+
+        with open(mass_file, 'w') as f:
+            f.write("#  AVL Mass File\n")
+            f.write("#  Units: feet, lbm, lbm-ft^2\n")
+            f.write("#\n")
+            f.write("#  mass       x          y          z          Ixx        Iyy        Izz        Ixy        Ixz        Iyz\n")
+            f.write(f"{mass_props.mass:10.4f}  "
+                   f"{mass_props.cg[0]:10.6f}  "
+                   f"{mass_props.cg[1]:10.6f}  "
+                   f"{mass_props.cg[2]:10.6f}  "
+                   f"{inertia[0,0]:10.4f}  "
+                   f"{inertia[1,1]:10.4f}  "
+                   f"{inertia[2,2]:10.4f}  "
+                   f"{inertia[0,1]:10.4f}  "
+                   f"{inertia[0,2]:10.4f}  "
+                   f"{inertia[1,2]:10.4f}\n")
 
     def create_surface_definition(
         self,
