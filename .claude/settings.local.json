@@ -20,7 +20,9 @@
       "Bash(timeout 10 avl:*)",
       "Bash(timeout 120 aerodeck generate:*)",
       "Bash(pipeline_test.log)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(nul)",
+      "Bash(echo:*)"
     ],
     "deny": [],
     "ask": []
