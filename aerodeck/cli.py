@@ -150,6 +150,41 @@ def generate(
         else:
             logger.warning(f"No AVL results found for case {first_case_name}")
 
+        # Phase 4.5: Generate XFOIL Polars
+        logger.section("Phase 4.5: XFOIL Airfoil Polars")
+
+        from .analysis.xfoil_runner import XFOILRunner, AirfoilPolars
+
+        xfoil_runner = XFOILRunner(
+            xfoil_path=cfg.xfoil.executable,
+            verbose=verbose_mode
+        )
+
+        # Generate polars for NACA 0012 (default airfoil)
+        # TODO: Extract actual airfoil section from geometry
+        naca_code = "0012"
+        reynolds_numbers = [1e5, 5e5, 1e6, 5e6, 1e7]  # Range of Re for different flight conditions
+
+        try:
+            airfoil_polars = xfoil_runner.generate_naca_polar(
+                naca_code=naca_code,
+                reynolds_numbers=reynolds_numbers,
+                alpha_range=(-10.0, 20.0),
+                alpha_step=0.5,
+                mach=mach,
+                n_iter=200
+            )
+
+            # Save polars to CSV
+            polar_dir = output_dir / "polars"
+            xfoil_runner.save_polars(airfoil_polars, polar_dir)
+
+            logger.success(f"Generated {len(airfoil_polars.polars)} airfoil polars")
+        except Exception as e:
+            logger.warning(f"XFOIL polar generation failed: {e}")
+            logger.warning("Continuing with AVL-only aerodeck")
+            airfoil_polars = None
+
         # Phase 5: Generate AeroDeck
         logger.section("Phase 5: AeroDeck Generation")
 
@@ -187,7 +222,8 @@ def generate(
             aircraft_name=aircraft_name,
             avl_results=avl_results,
             reference_geometry=ref_geometry,
-            mass_properties=mass_props
+            mass_properties=mass_props,
+            airfoil_polars=airfoil_polars if 'airfoil_polars' in locals() else None
         )
 
         # Save aerodeck JSON
