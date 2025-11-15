@@ -67,6 +67,9 @@ class AVLResults:
     Cl_r: Optional[float] = None
     Cn_r: Optional[float] = None
 
+    # Neutral point (directly from AVL)
+    Xnp: Optional[float] = None
+
     converged: bool = True
     case: Optional[RunCase] = None
 
@@ -518,6 +521,14 @@ class AVLAnalysis:
                         except (ValueError, IndexError):
                             pass
 
+            # Neutral point (format: " Neutral point  Xnp =   3.995113")
+            if 'Neutral point' in line and 'Xnp' in line:
+                parts = line.split('=')
+                try:
+                    derivatives['Xnp'] = float(parts[1].split()[0])
+                except (ValueError, IndexError):
+                    pass
+
         return AVLResults(
             CL=derivatives.get('CL', 0.0),
             CD=derivatives.get('CD', 0.0),
@@ -540,6 +551,7 @@ class AVLAnalysis:
             Cy_r=derivatives.get('CYr'),
             Cl_r=derivatives.get('Clr'),
             Cn_r=derivatives.get('Cnr'),
+            Xnp=derivatives.get('Xnp'),
             converged=True
         )
 
@@ -577,6 +589,7 @@ class AVLAnalysis:
             Cy_r=data.get('CYr'),
             Cl_r=data.get('Clr'),
             Cn_r=data.get('Cnr'),
+            Xnp=data.get('Xnp'),
             converged=True
         )
 
@@ -704,6 +717,14 @@ class AVLAnalysis:
                     except (ValueError, IndexError):
                         pass
 
+                # Neutral point
+                if 'Neutral point' in line and 'Xnp' in line:
+                    parts = line.split('=')
+                    try:
+                        derivatives['Xnp'] = float(parts[1].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
         except Exception as e:
             self.logger.debug(f"Error parsing stability file: {e}")
 
@@ -740,6 +761,7 @@ class AVLAnalysis:
             Cn_beta=data.get('Cnb'),
             CL_q=data.get('CLq'),
             Cm_q=data.get('Cmq'),
+            Xnp=data.get('Xnp'),
             converged=True
         )
 

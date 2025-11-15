@@ -138,10 +138,16 @@ def generate(
         # Execute AVL
         results = avl_runner.execute_avl(avl_file, run_cases, output_dir)
 
-        # Compute derivatives
-        stability = avl_runner.compute_stability_derivatives(results)
+        # Compute derivatives - find the case closest to trim (alpha=0, beta=0)
+        trim_case = min(run_cases, key=lambda c: abs(c.alpha) + abs(c.beta))
+        logger.debug(f"Using trim case: alpha={trim_case.alpha}°, beta={trim_case.beta}°")
 
-        # Use results from first case (trim condition)
+        stability = results.get(trim_case.name)
+        if stability is None:
+            logger.warning(f"Trim case {trim_case.name} not found, using first case")
+            stability = list(results.values())[0]
+
+        # Keep reference to first case for backwards compatibility
         first_case_name = run_cases[0].name
         avl_results = results.get(first_case_name)
 
@@ -217,10 +223,10 @@ def generate(
             Iyz=inertia[1, 2]
         )
 
-        # Create aerodeck
+        # Create aerodeck (use stability which has all derivatives including Xnp)
         aerodeck = AeroDeck.from_avl_results(
             aircraft_name=aircraft_name,
-            avl_results=avl_results,
+            avl_results=stability,
             reference_geometry=ref_geometry,
             mass_properties=mass_props,
             airfoil_polars=airfoil_polars if 'airfoil_polars' in locals() else None
@@ -456,6 +462,61 @@ def generate_polars(
 
     except Exception as e:
         logger.error(f"Polar generation failed: {e}")
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
+@main.command()
+@click.argument('aerodeck_file', type=click.Path(exists=True, path_type=Path))
+@click.option(
+    '--output',
+    '-o',
+    type=click.Path(path_type=Path),
+    default=None,
+    help='Output PDF path (default: same name as JSON with .pdf)'
+)
+@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+def report(
+    aerodeck_file: Path,
+    output: Optional[Path],
+    verbose: bool
+) -> None:
+    """
+    Generate PDF report from aerodeck JSON file.
+
+    AERODECK_FILE: Path to aerodeck JSON file
+
+    Examples:
+        aerodeck report results/testaircraft_aerodeck.json
+        aerodeck report results/testaircraft_aerodeck.json -o my_report.pdf
+    """
+    from .output.report_generator import ReportGenerator
+
+    logger = get_logger(verbose=verbose)
+
+    try:
+        logger.info("=" * 60)
+        logger.info("  AeroDeck Report Generator")
+        logger.info("=" * 60)
+        logger.info(f"Input: {aerodeck_file.name}")
+        logger.info("")
+
+        # Create report generator
+        generator = ReportGenerator(verbose=verbose)
+
+        # Generate report
+        output_file = generator.generate_report(aerodeck_file, output)
+
+        logger.info("")
+        logger.info("=" * 60)
+        logger.success(f"Report generated successfully!")
+        logger.info(f"Output: {output_file.absolute()}")
+        logger.info("=" * 60)
+
+    except Exception as e:
+        logger.error(f"Report generation failed: {e}")
         if verbose:
             import traceback
             traceback.print_exc()
