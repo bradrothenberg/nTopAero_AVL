@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 import click
+import numpy as np
 
 from . import __version__
 from .geometry.loader import GeometryLoader
@@ -164,8 +165,96 @@ def generate(
         else:
             logger.warning(f"No AVL results found for case {first_case_name}")
 
-        # Phase 4.5: Generate XFOIL Polars
-        logger.section("Phase 4.5: XFOIL Airfoil Polars")
+        # Phase 4.5: Control Derivative Analysis
+        logger.section("Phase 4.5: Control Derivatives")
+
+        # Run elevon (symmetric) deflection sweep at trim condition (alpha=0, beta=0)
+        control_deflections = [-10.0, -5.0, 0.0, 5.0, 10.0]  # degrees
+        control_cases = []
+
+        logger.info("Running elevon (pitch control) deflection sweep...")
+        for delta in control_deflections:
+            from .analysis.avl_runner import RunCase
+            control_cases.append(RunCase(
+                alpha=0.0,
+                beta=0.0,
+                elevon=delta,
+                mach=mach
+            ))
+
+        logger.info(f"Running {len(control_cases)} elevon deflection cases...")
+        elevon_results = avl_runner.execute_avl(avl_file, control_cases, output_dir)
+
+        # Run aileron (differential) deflection sweep
+        logger.info("Running aileron (roll control) deflection sweep...")
+        aileron_cases = []
+        for delta in control_deflections:
+            from .analysis.avl_runner import RunCase
+            aileron_cases.append(RunCase(
+                alpha=0.0,
+                beta=0.0,
+                aileron=delta,
+                mach=mach
+            ))
+
+        logger.info(f"Running {len(aileron_cases)} aileron deflection cases...")
+        aileron_results = avl_runner.execute_avl(avl_file, aileron_cases, output_dir)
+
+        # Extract control derivatives via finite differences
+        control_derivatives = {}
+
+        # Elevon derivatives (pitch control)
+        if len(elevon_results) >= 3:
+            # Extract CL, Cm for each elevon deflection
+            deltas = []
+            CLs = []
+            Cms = []
+
+            for case in control_cases:
+                result = elevon_results.get(case.name)
+                if result:
+                    deltas.append(case.elevon)
+                    CLs.append(result.CL)
+                    Cms.append(result.Cm)
+
+            if len(deltas) >= 3:
+                # Linear fit to get derivatives (per degree)
+                CL_de = np.polyfit(deltas, CLs, 1)[0]  # /deg
+                Cm_de = np.polyfit(deltas, Cms, 1)[0]  # /deg
+
+                control_derivatives['CL_de_per_deg'] = float(CL_de)
+                control_derivatives['Cm_de_per_deg'] = float(Cm_de)
+
+                logger.info(f"  Elevon: CL_de = {CL_de:.4f} /deg")
+                logger.info(f"  Elevon: Cm_de = {Cm_de:.4f} /deg")
+
+        # Aileron derivatives (roll control)
+        if len(aileron_results) >= 3:
+            # Extract Cl, Cn for each aileron deflection
+            deltas = []
+            Cls = []
+            Cns = []
+
+            for case in aileron_cases:
+                result = aileron_results.get(case.name)
+                if result:
+                    deltas.append(case.aileron)
+                    Cls.append(result.Cl)
+                    Cns.append(result.Cn)
+
+            if len(deltas) >= 3:
+                # Linear fit to get derivatives (per degree)
+                Cl_da = np.polyfit(deltas, Cls, 1)[0]  # /deg
+                Cn_da = np.polyfit(deltas, Cns, 1)[0]  # /deg (adverse yaw)
+
+                control_derivatives['Cl_da_per_deg'] = float(Cl_da)
+                control_derivatives['Cn_da_per_deg'] = float(Cn_da)
+
+                logger.info(f"  Aileron: Cl_da = {Cl_da:.4f} /deg")
+                logger.info(f"  Aileron: Cn_da = {Cn_da:.4f} /deg (adverse yaw)")
+
+        # Phase 4.6: Generate XFOIL Polars
+        logger.section("Phase 4.6: XFOIL Airfoil Polars")
 
         from .analysis.xfoil_runner import XFOILRunner, AirfoilPolars
 
@@ -260,7 +349,8 @@ def generate(
             avl_results=stability,
             reference_geometry=ref_geometry,
             mass_properties=mass_props,
-            airfoil_polars=airfoil_polars if 'airfoil_polars' in locals() else None
+            airfoil_polars=airfoil_polars if 'airfoil_polars' in locals() else None,
+            control_derivatives=control_derivatives if control_derivatives else None
         )
 
         # Save aerodeck JSON

@@ -17,14 +17,17 @@ class RunCase:
     alpha: float  # Angle of attack [deg]
     beta: float = 0.0  # Sideslip angle [deg]
     mach: float = 0.0  # Mach number
-    elevon: float = 0.0  # Elevon deflection [deg]
+    elevon: float = 0.0  # Elevon deflection (symmetric) [deg]
+    aileron: float = 0.0  # Aileron deflection (differential) [deg]
     name: str = ""  # Case name
 
     def __post_init__(self) -> None:
         """Generate name if not provided."""
         if not self.name:
             if self.elevon != 0.0:
-                self.name = f"a{self.alpha:.1f}_b{self.beta:.1f}_d{self.elevon:.1f}_M{self.mach:.2f}"
+                self.name = f"a{self.alpha:.1f}_b{self.beta:.1f}_de{self.elevon:.1f}_M{self.mach:.2f}"
+            elif self.aileron != 0.0:
+                self.name = f"a{self.alpha:.1f}_b{self.beta:.1f}_da{self.aileron:.1f}_M{self.mach:.2f}"
             else:
                 self.name = f"a{self.alpha:.1f}_b{self.beta:.1f}_M{self.mach:.2f}"
 
@@ -235,9 +238,15 @@ class AVLAnalysis:
             if abs(case.beta) > 1e-6:
                 f.write(f"B B {case.beta}\n")
 
-            # Set control deflection (elevon)
+            # Set control deflections
+            # AVL syntax: A D1 value (where D1 is the first control variable)
+            # D1 = elevon (symmetric, pitch control)
+            # D2 = aileron (differential, roll control)
             if abs(case.elevon) > 1e-6:
-                f.write(f"D1 D1 {case.elevon}\n")
+                f.write(f"A D1 {case.elevon}\n")
+
+            if abs(case.aileron) > 1e-6:
+                f.write(f"A D2 {case.aileron}\n")
 
             # NOTE: Skip Mach setting for now - it causes issues with ST command in batch mode
             # For low-speed analysis (M < 0.3), incompressible assumption is valid anyway
@@ -246,6 +255,11 @@ class AVLAnalysis:
 
             # Execute - AVL will compute and display results automatically
             f.write("X\n")
+
+            # Request total forces - write to file
+            ft_file = f"{case.name}_ft.txt"
+            f.write("FT\n")
+            f.write(f"{ft_file}\n")  # Filename to write to
 
             # Request stability derivatives - write to file
             stab_file = f"{case.name}_stab.txt"
@@ -372,7 +386,23 @@ class AVLAnalysis:
                 # Combine with main output for comprehensive parsing
                 avl_output += "\n" + stab_output
 
-        return self._parse_avl_output(avl_output)
+        # Parse the result from console output
+        result = self._parse_avl_output(avl_output)
+
+        # For control deflection cases, override forces with FT file data (more accurate)
+        if abs(case.elevon) > 1e-6 or abs(case.aileron) > 1e-6:
+            ft_file = output_dir / f"{case_name}_ft.txt"
+            ft_data = self._parse_ft_file(ft_file)
+            if ft_data:
+                # Override with FT file data which has the actual forces with deflection
+                result.CL = ft_data.get('CL', result.CL)
+                result.CD = ft_data.get('CD', result.CD)
+                result.Cy = ft_data.get('CY', result.Cy)
+                result.Cm = ft_data.get('Cm', result.Cm)
+                result.Cn = ft_data.get('Cn', result.Cn)
+                result.Cl = ft_data.get('Cl', result.Cl)
+
+        return result
 
     def _parse_avl_output(self, output: str) -> AVLResults:
         """
@@ -562,6 +592,44 @@ class AVLAnalysis:
             Xnp=derivatives.get('Xnp'),
             converged=True
         )
+
+    def _parse_ft_file(self, ft_file: Path) -> dict:
+        """
+        Parse AVL total forces file (FT output).
+
+        Args:
+            ft_file: Path to FT file
+
+        Returns:
+            Dictionary with CL, CD, Cy, Cm, Cn, Cl
+        """
+        forces = {}
+
+        if not ft_file.exists():
+            return forces
+
+        with open(ft_file, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+
+        # Parse force coefficients from FT output
+        # Look for lines like "CLtot =   0.12345"
+        import re
+
+        patterns = {
+            'CL': r'CLtot\s*=\s*([-+]?\d+\.\d+)',
+            'CD': r'CDtot\s*=\s*([-+]?\d+\.\d+)',
+            'CY': r'CYtot\s*=\s*([-+]?\d+\.\d+)',
+            'Cm': r'Cmtot\s*=\s*([-+]?\d+\.\d+)',
+            'Cn': r'Cntot\s*=\s*([-+]?\d+\.\d+)',
+            'Cl': r'Cltot\s*=\s*([-+]?\d+\.\d+)'
+        }
+
+        for key, pattern in patterns.items():
+            match = re.search(pattern, content)
+            if match:
+                forces[key] = float(match.group(1))
+
+        return forces
 
     def _parse_stab_file_to_results(self, stab_file: Path) -> AVLResults:
         """

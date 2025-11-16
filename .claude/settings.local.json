@@ -7,7 +7,11 @@
       "Bash(git push:*)",
       "Bash(dir:*)",
       "Bash(powershell -Command:*)",
-      "Bash(timeout 300 aerodeck generate:*)"
+      "Bash(timeout 300 aerodeck generate:*)",
+      "Bash(timeout 180 aerodeck generate:*)",
+      "Bash(while [ ! -f results/ntop_aircraft_aerodeck.json ])",
+      "Bash(do sleep 1)",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": []

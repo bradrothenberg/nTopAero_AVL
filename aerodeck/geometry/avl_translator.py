@@ -289,8 +289,10 @@ class AVLGeometryWriter:
         # Calculate spanwise distances for intelligent panel distribution
         y_sorted = y_coords[sort_idx]
 
-        # Determine where to place elevon control surface (outboard sections only)
+        # Determine where to place elevon control surface (outboard sections)
+        # Control should start at midspan and extend to tip for effectiveness
         elevon_start_idx = len(sort_idx) // 2 if elevon else len(sort_idx)
+        elevon_end_idx = len(sort_idx) - 1  # Extend to second-to-last section
 
         for idx, i in enumerate(sort_idx):
             le = le_pts[i]
@@ -321,13 +323,18 @@ class AVLGeometryWriter:
             # Write airfoil section
             self._write_airfoil_section(f)
 
-            # Add control surface ONLY at the first outboard section
-            # SgnDup = -1.0 means opposite deflection on mirrored side (for roll control)
-            # SgnDup = +1.0 means same deflection on mirrored side (for pitch control)
-            if elevon and idx == elevon_start_idx:
+            # Add control surfaces on outboard sections (from midspan to near-tip)
+            # Control surfaces need to span between sections to be effective
+            if elevon and elevon_start_idx <= idx < elevon_end_idx:
+                # Elevon: SgnDup = 1.0 means same deflection on both sides (for pitch control)
                 f.write("CONTROL\n")
                 f.write("#Cname   Cgain  Xhinge  XYZhvec  SgnDup\n")
-                f.write(f"elevon   1.0    0.75    0. 1. 0.    -1.0\n\n")
+                f.write(f"elevon   1.0    0.75    0. 0. 0.    1.0\n\n")
+
+                # Aileron: SgnDup = -1.0 means opposite deflection on each side (for roll control)
+                f.write("CONTROL\n")
+                f.write("#Cname   Cgain  Xhinge  XYZhvec  SgnDup\n")
+                f.write(f"aileron  1.0    0.75    0. 0. 0.   -1.0\n\n")
 
     def _interpret_clockwise_panel(self, pts: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
