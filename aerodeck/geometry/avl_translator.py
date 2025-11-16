@@ -289,10 +289,29 @@ class AVLGeometryWriter:
         # Calculate spanwise distances for intelligent panel distribution
         y_sorted = y_coords[sort_idx]
 
-        # Determine where to place elevon control surface (outboard sections)
-        # Control should start at midspan and extend to tip for effectiveness
-        elevon_start_idx = len(sort_idx) // 2 if elevon else len(sort_idx)
-        elevon_end_idx = len(sort_idx) - 1  # Extend to second-to-last section
+        # Determine where to place elevon control surface based on elevon geometry
+        elevon_start_idx = len(sort_idx)  # Default: no control
+        elevon_end_idx = len(sort_idx)
+
+        if elevon:
+            # Get elevon spanwise extent from the elevon points
+            # Elevon file is a quadrilateral: [root_LE, tip_LE, tip_TE, root_TE]
+            elevon_pts = elevon.points
+            elevon_y_coords = elevon_pts[:, 1]  # Y coordinates
+            elevon_y_min = elevon_y_coords.min()
+            elevon_y_max = elevon_y_coords.max()
+
+            # Find wing sections that overlap with or are contained within the elevon spanwise range
+            # Strategy: Find the first section >= elevon root and last section that's close to elevon span
+            for idx, i in enumerate(sort_idx):
+                y = y_sorted[idx]
+                # Section is at or outboard of elevon root
+                if y >= elevon_y_min - 0.01:
+                    if elevon_start_idx == len(sort_idx):
+                        elevon_start_idx = idx  # First section at/outboard of elevon root
+                    # Section is at or inboard of elevon tip (or reasonably close for next section)
+                    if y <= elevon_y_max + 0.5:  # Allow next section slightly beyond elevon tip
+                        elevon_end_idx = idx  # Update end index
 
         for idx, i in enumerate(sort_idx):
             le = le_pts[i]
