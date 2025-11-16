@@ -112,8 +112,16 @@ def generate(
 
         # Phase 3: Generate AVL input
         logger.section("Phase 3: AVL Input Generation")
+
+        # Check for custom airfoil file
+        airfoil_files = list(input_dir.glob("*.dat"))
+        airfoil_file = airfoil_files[0] if airfoil_files else None
+        if airfoil_file:
+            logger.info(f"Using airfoil file: {airfoil_file.name}")
+
         avl_translator = AVLGeometryWriter(
             ref_config=cfg.reference,
+            airfoil_file=airfoil_file,
             verbose=verbose_mode
         )
 
@@ -166,20 +174,43 @@ def generate(
             verbose=verbose_mode
         )
 
-        # Generate polars for NACA 0012 (default airfoil)
-        # TODO: Extract actual airfoil section from geometry
-        naca_code = "0012"
-        reynolds_numbers = [1e5, 5e5, 1e6, 5e6, 1e7]  # Range of Re for different flight conditions
+        # Generate polars for airfoil
+        # Reynolds numbers for 20,000 ft operation:
+        # At 100 mph: Re ≈ 3.2e6
+        # At 150 mph: Re ≈ 4.8e6
+        # At 200 mph: Re ≈ 6.4e6
+        # At 250 mph: Re ≈ 8.0e6
+        # Also include lower Re for stall/low-speed analysis
+        reynolds_numbers = [5e5, 1e6, 3e6, 5e6, 7e6]
+
+        # Check for custom airfoil file in input directory
+        airfoil_files = list(input_dir.glob("*.dat"))
 
         try:
-            airfoil_polars = xfoil_runner.generate_naca_polar(
-                naca_code=naca_code,
-                reynolds_numbers=reynolds_numbers,
-                alpha_range=(-10.0, 20.0),
-                alpha_step=0.5,
-                mach=mach,
-                n_iter=200
-            )
+            if airfoil_files:
+                # Use first .dat file found
+                airfoil_file = airfoil_files[0]
+                logger.info(f"Using custom airfoil: {airfoil_file.name}")
+                airfoil_polars = xfoil_runner.generate_airfoil_polar(
+                    airfoil_file=str(airfoil_file),
+                    reynolds_numbers=reynolds_numbers,
+                    alpha_range=(-10.0, 20.0),
+                    alpha_step=0.5,
+                    mach=mach,
+                    n_iter=200
+                )
+            else:
+                # Fallback to NACA 0012
+                naca_code = "0012"
+                logger.info(f"No custom airfoil found, using NACA {naca_code}")
+                airfoil_polars = xfoil_runner.generate_naca_polar(
+                    naca_code=naca_code,
+                    reynolds_numbers=reynolds_numbers,
+                    alpha_range=(-10.0, 20.0),
+                    alpha_step=0.5,
+                    mach=mach,
+                    n_iter=200
+                )
 
             # Save polars to CSV
             polar_dir = output_dir / "polars"

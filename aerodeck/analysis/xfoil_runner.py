@@ -167,6 +167,65 @@ class XFOILRunner:
             polars=polars
         )
 
+    def generate_airfoil_polar(
+        self,
+        airfoil_file: str,
+        reynolds_numbers: List[float],
+        alpha_range: Tuple[float, float] = (-10.0, 20.0),
+        alpha_step: float = 0.5,
+        mach: float = 0.0,
+        n_iter: int = 200
+    ) -> AirfoilPolars:
+        """
+        Generate polars for an airfoil from a coordinate file.
+
+        Args:
+            airfoil_file: Path to airfoil .dat file (Selig or Lednicer format)
+            reynolds_numbers: List of Reynolds numbers to analyze
+            alpha_range: (min, max) alpha range in degrees
+            alpha_step: Alpha increment in degrees
+            mach: Mach number
+            n_iter: Maximum iterations for convergence
+
+        Returns:
+            AirfoilPolars with data for all Reynolds numbers
+        """
+        from pathlib import Path
+
+        airfoil_path = Path(airfoil_file)
+        if not airfoil_path.exists():
+            raise FileNotFoundError(f"Airfoil file not found: {airfoil_file}")
+
+        # Extract airfoil name from file (first line)
+        with open(airfoil_path, 'r') as f:
+            airfoil_name = f.readline().strip()
+
+        self.logger.info(f"Generating {airfoil_name} polars from {airfoil_path.name}...")
+
+        polars = []
+        for re in reynolds_numbers:
+            self.logger.info(f"  Computing polar at Re = {re:.2e}...")
+
+            polar = self._run_xfoil_file(
+                airfoil_file=str(airfoil_path),
+                reynolds=re,
+                alpha_range=alpha_range,
+                alpha_step=alpha_step,
+                mach=mach,
+                n_iter=n_iter
+            )
+
+            if polar:
+                polars.append(polar)
+                self.logger.info(f"    OK Converged for {len(polar.alpha)} points")
+            else:
+                self.logger.warning(f"    X Failed to converge at Re = {re:.2e}")
+
+        return AirfoilPolars(
+            airfoil_name=airfoil_name,
+            polars=polars
+        )
+
     def _run_xfoil_naca(
         self,
         naca_code: str,
@@ -232,6 +291,76 @@ class XFOILRunner:
                 self.logger.error(f"XFOIL not found at: {self.xfoil_path}")
                 return None
 
+    def _run_xfoil_file(
+        self,
+        airfoil_file: str,
+        reynolds: float,
+        alpha_range: Tuple[float, float],
+        alpha_step: float,
+        mach: float,
+        n_iter: int
+    ) -> Optional[PolarData]:
+        """
+        Run XFOIL for an airfoil from a coordinate file.
+
+        Args:
+            airfoil_file: Path to airfoil .dat file
+            reynolds: Reynolds number
+            alpha_range: (min, max) alpha range
+            alpha_step: Alpha increment
+            mach: Mach number
+            n_iter: Max iterations
+
+        Returns:
+            PolarData if successful, None if failed
+        """
+        # Create temporary directory for XFOIL output
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            polar_file = tmpdir_path / "polar.txt"
+
+            # Copy airfoil to temp directory (XFOIL can't handle spaces in paths)
+            import shutil
+            temp_airfoil = tmpdir_path / "airfoil.dat"
+            shutil.copy2(airfoil_file, temp_airfoil)
+
+            # Create XFOIL command file
+            commands = self._create_xfoil_commands_file(
+                airfoil_file=str(temp_airfoil),
+                reynolds=reynolds,
+                alpha_range=alpha_range,
+                alpha_step=alpha_step,
+                mach=mach,
+                n_iter=n_iter,
+                output_file=polar_file
+            )
+
+            # Run XFOIL
+            try:
+                result = subprocess.run(
+                    [self.xfoil_path],
+                    input=commands,
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+
+                if result.returncode != 0:
+                    self.logger.debug(f"XFOIL returned code {result.returncode}")
+
+                # Parse polar data
+                if polar_file.exists():
+                    return self._parse_polar_file(polar_file, reynolds, mach)
+                else:
+                    return None
+
+            except subprocess.TimeoutExpired:
+                self.logger.warning("XFOIL timeout")
+                return None
+            except FileNotFoundError:
+                self.logger.error(f"XFOIL not found at: {self.xfoil_path}")
+                return None
+
     def _create_xfoil_commands(
         self,
         naca_code: str,
@@ -263,6 +392,59 @@ class XFOILRunner:
             f"ITER {n_iter}",  # Set max iterations
             f"VISC {reynolds}",  # Set Reynolds number
             f"MACH {mach}",  # Set Mach number
+            "PACC",  # Accumulate polar
+            str(output_file),  # Polar save file
+            "",  # No dump file
+            f"ASEQ {alpha_range[0]} {alpha_range[1]} {alpha_step}",  # Alpha sequence
+            "PACC",  # Close polar accumulation
+            "",  # Exit OPER
+            "QUIT"  # Exit XFOIL
+        ]
+
+        return "\n".join(commands) + "\n"
+
+    def _create_xfoil_commands_file(
+        self,
+        airfoil_file: str,
+        reynolds: float,
+        alpha_range: Tuple[float, float],
+        alpha_step: float,
+        mach: float,
+        n_iter: int,
+        output_file: Path
+    ) -> str:
+        """
+        Create XFOIL command string for batch execution with airfoil file.
+
+        Args:
+            airfoil_file: Path to airfoil coordinate file
+            reynolds: Reynolds number
+            alpha_range: (min, max) alpha
+            alpha_step: Alpha increment
+            mach: Mach number
+            n_iter: Max iterations
+            output_file: Path to output polar file
+
+        Returns:
+            XFOIL command string
+        """
+        # Convert to forward slashes for XFOIL (works on Windows too)
+        airfoil_file_unix = str(Path(airfoil_file).as_posix())
+
+        commands = [
+            f"LOAD {airfoil_file_unix}",  # Load airfoil from file
+            "PPAR",  # Panel parameters for better convergence
+            "N 200",  # Use 200 panels (more resolution)
+            "T 1.0",  # Panel bunching parameter
+            "",  # Accept
+            "",  # Exit PPAR
+            "OPER",  # Enter OPER menu
+            f"ITER {n_iter}",  # Set max iterations
+            f"VISC {reynolds}",  # Set Reynolds number
+            f"MACH {mach}",  # Set Mach number
+            "VPAR",  # Viscous parameters
+            "N 9.0",  # Amplification factor (default 9.0, lower = more sensitive to transition)
+            "",  # Exit VPAR
             "PACC",  # Accumulate polar
             str(output_file),  # Polar save file
             "",  # No dump file

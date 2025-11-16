@@ -30,6 +30,7 @@ class AVLGeometryWriter:
     def __init__(
         self,
         ref_config: Optional[ReferenceConfig] = None,
+        airfoil_file: Optional[Path] = None,
         verbose: bool = True
     ) -> None:
         """
@@ -37,9 +38,11 @@ class AVLGeometryWriter:
 
         Args:
             ref_config: Reference geometry configuration
+            airfoil_file: Path to custom airfoil .dat file (optional)
             verbose: Enable verbose logging
         """
         self.ref_config = ref_config or ReferenceConfig()
+        self.airfoil_file = airfoil_file
         self.logger = get_logger(verbose=verbose)
 
     def write_avl_input(
@@ -253,13 +256,12 @@ class AVLGeometryWriter:
         f.write("YDUPLICATE\n")
         f.write("0.0\n\n")
 
-        # Write sections without control surface for now (TODO: fix control surface setup)
-        # Control surfaces cause "Illegal constraint index" error in AVL
+        # Write sections with control surface
         self._write_sections(
             f,
             geometry.leading_edge.points,
             geometry.trailing_edge.points,
-            None  # Disable elevon control surface temporarily
+            geometry.elevon  # Enable elevon control surface
         )
 
     def _write_sections(
@@ -316,18 +318,16 @@ class AVLGeometryWriter:
             else:
                 f.write(f"{le[0]:.6f}  {le[1]:.6f}  {le[2]:.6f}  {chord:.6f}  0.0\n\n")
 
-            # Use NACA 4-digit airfoil (NACA 0012 for symmetric airfoil)
-            # AVL will use its built-in airfoil library for NACA airfoils
-            f.write("NACA\n")
-            f.write("0012\n\n")
+            # Write airfoil section
+            self._write_airfoil_section(f)
 
             # Add control surface ONLY at the first outboard section
             # SgnDup = -1.0 means opposite deflection on mirrored side (for roll control)
             # SgnDup = +1.0 means same deflection on mirrored side (for pitch control)
             if elevon and idx == elevon_start_idx:
                 f.write("CONTROL\n")
-                f.write("#Cname   Cgain  Xhinge  HingeVec     SgnDup\n")
-                f.write(f"Elevon   1.0    0.75    0. 0. 0.    -1.0\n\n")
+                f.write("#Cname   Cgain  Xhinge  XYZhvec  SgnDup\n")
+                f.write(f"elevon   1.0    0.75    0. 1. 0.    -1.0\n\n")
 
     def _interpret_clockwise_panel(self, pts: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -476,6 +476,30 @@ class AVLGeometryWriter:
             else:
                 f.write(f"{le[0]:.6f}  {le[1]:.6f}  {le[2]:.6f}  {chord:.6f}  0.0\n\n")
 
+            # Winglets use NACA 0012 symmetric airfoil (flat plate)
+            self._write_airfoil_section(f, use_custom_airfoil=False)
+
+    def _write_airfoil_section(self, f: TextIO, use_custom_airfoil: bool = True) -> None:
+        """
+        Write airfoil section to AVL file.
+
+        Args:
+            f: File handle to write to
+            use_custom_airfoil: If True, uses custom airfoil file (if available).
+                               If False, forces NACA 0012 symmetric airfoil.
+
+        For main wing: use_custom_airfoil=True (NACA 64-208 cambered airfoil)
+        For winglets: use_custom_airfoil=False (NACA 0012 flat plate)
+        """
+        if use_custom_airfoil and self.airfoil_file and self.airfoil_file.exists():
+            # Use AFILE command to load airfoil from file
+            # Must use ABSOLUTE path since AVL will be run from a different directory
+            # Convert to forward slashes for AVL (works on Windows too)
+            airfoil_path = str(self.airfoil_file.resolve().as_posix())
+            f.write(f"AFILE\n")
+            f.write(f"{airfoil_path}\n\n")
+        else:
+            # Default to NACA 0012 for symmetric airfoil (flat plate)
             f.write("NACA\n")
             f.write("0012\n\n")
 

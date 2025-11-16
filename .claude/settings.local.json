@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(aerodeck report:*)"
+      "Bash(aerodeck report:*)",
+      "Bash(git remote add:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(git push:*)",
+      "Bash(dir:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(timeout 300 aerodeck generate:*)"
     ],
     "deny": [],
     "ask": []

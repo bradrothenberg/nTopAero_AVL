@@ -17,12 +17,16 @@ class RunCase:
     alpha: float  # Angle of attack [deg]
     beta: float = 0.0  # Sideslip angle [deg]
     mach: float = 0.0  # Mach number
+    elevon: float = 0.0  # Elevon deflection [deg]
     name: str = ""  # Case name
 
     def __post_init__(self) -> None:
         """Generate name if not provided."""
         if not self.name:
-            self.name = f"a{self.alpha:.1f}_b{self.beta:.1f}_M{self.mach:.2f}"
+            if self.elevon != 0.0:
+                self.name = f"a{self.alpha:.1f}_b{self.beta:.1f}_d{self.elevon:.1f}_M{self.mach:.2f}"
+            else:
+                self.name = f"a{self.alpha:.1f}_b{self.beta:.1f}_M{self.mach:.2f}"
 
 
 @dataclass
@@ -230,6 +234,10 @@ class AVLAnalysis:
             # Set beta
             if abs(case.beta) > 1e-6:
                 f.write(f"B B {case.beta}\n")
+
+            # Set control deflection (elevon)
+            if abs(case.elevon) > 1e-6:
+                f.write(f"D1 D1 {case.elevon}\n")
 
             # NOTE: Skip Mach setting for now - it causes issues with ST command in batch mode
             # For low-speed analysis (M < 0.3), incompressible assumption is valid anyway
