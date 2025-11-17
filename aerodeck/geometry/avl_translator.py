@@ -49,7 +49,7 @@ class AVLGeometryWriter:
         self,
         geometry: GeometryData,
         output_path: Path,
-        aircraft_name: str = "nTop Aircraft"
+        aircraft_name: str = "group3-NQX-rev1"
     ) -> ReferenceGeometry:
         """
         Write complete AVL input file.
@@ -293,13 +293,26 @@ class AVLGeometryWriter:
         elevon_start_idx = len(sort_idx)  # Default: no control
         elevon_end_idx = len(sort_idx)
 
+        # Calculate hinge position from elevon geometry if available
+        elevon_root_le_x = None
+        elevon_tip_le_x = None
+        elevon_root_y = None
+        elevon_tip_y = None
         if elevon:
             # Get elevon spanwise extent from the elevon points
             # Elevon file is a quadrilateral: [root_LE, tip_LE, tip_TE, root_TE]
             elevon_pts = elevon.points
             elevon_y_coords = elevon_pts[:, 1]  # Y coordinates
+            elevon_x_coords = elevon_pts[:, 0]  # X coordinates
             elevon_y_min = elevon_y_coords.min()
             elevon_y_max = elevon_y_coords.max()
+
+            # Store elevon LE sweep line (root to tip)
+            # Point 0 is root LE, Point 1 is tip LE
+            elevon_root_le_x = elevon_x_coords[0]
+            elevon_root_y = elevon_y_coords[0]
+            elevon_tip_le_x = elevon_x_coords[1]
+            elevon_tip_y = elevon_y_coords[1]
 
             # Find wing sections that overlap with or are contained within the elevon spanwise range
             # Strategy: Find the first section >= elevon root and last section that's close to elevon span
@@ -342,18 +355,39 @@ class AVLGeometryWriter:
             # Write airfoil section
             self._write_airfoil_section(f)
 
-            # Add control surfaces on outboard sections (from midspan to near-tip)
+            # Add control surfaces on sections within elevon spanwise range
             # Control surfaces need to span between sections to be effective
-            if elevon and elevon_start_idx <= idx < elevon_end_idx:
+            if elevon and elevon_start_idx <= idx <= elevon_end_idx:
+                # Calculate hinge position as fraction of wing chord
+                # Interpolate elevon LE X position at this section's Y coordinate
+                if elevon_root_le_x is not None and elevon_tip_le_x is not None:
+                    section_y = le[1]  # This section's Y coordinate
+
+                    # Linear interpolation along elevon LE sweep line
+                    # elevon_hinge_x(y) = root_le_x + (tip_le_x - root_le_x) * (y - root_y) / (tip_y - root_y)
+                    if abs(elevon_tip_y - elevon_root_y) > 0.001:
+                        y_frac = (section_y - elevon_root_y) / (elevon_tip_y - elevon_root_y)
+                        y_frac = max(0.0, min(1.0, y_frac))  # Clamp to [0, 1]
+                        elevon_hinge_x = elevon_root_le_x + (elevon_tip_le_x - elevon_root_le_x) * y_frac
+                    else:
+                        elevon_hinge_x = elevon_root_le_x  # Use root if no span
+
+                    # Hinge position as fraction: (hinge_x - section_le_x) / chord
+                    hinge_frac = (elevon_hinge_x - le[0]) / chord
+                    # Clamp between 0.5 and 1.0 for reasonable control surface placement
+                    hinge_frac = max(0.5, min(1.0, hinge_frac))
+                else:
+                    hinge_frac = 0.75  # Default to 75% if no elevon geometry
+
                 # Elevon: SgnDup = 1.0 means same deflection on both sides (for pitch control)
                 f.write("CONTROL\n")
                 f.write("#Cname   Cgain  Xhinge  XYZhvec  SgnDup\n")
-                f.write(f"elevon   1.0    0.75    0. 0. 0.    1.0\n\n")
+                f.write(f"elevon   1.0    {hinge_frac:.4f}    0. 0. 0.    1.0\n\n")
 
                 # Aileron: SgnDup = -1.0 means opposite deflection on each side (for roll control)
                 f.write("CONTROL\n")
                 f.write("#Cname   Cgain  Xhinge  XYZhvec  SgnDup\n")
-                f.write(f"aileron  1.0    0.75    0. 0. 0.   -1.0\n\n")
+                f.write(f"aileron  1.0    {hinge_frac:.4f}    0. 0. 0.   -1.0\n\n")
 
     def _interpret_clockwise_panel(self, pts: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """

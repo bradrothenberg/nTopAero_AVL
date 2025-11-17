@@ -53,7 +53,7 @@ def main() -> None:
 )
 @click.option(
     '--aircraft-name',
-    default='nTop Aircraft',
+    default='group3-NQX-rev1',
     help='Aircraft name for reports'
 )
 def generate(
@@ -169,7 +169,8 @@ def generate(
         logger.section("Phase 4.5: Control Derivatives")
 
         # Run elevon (symmetric) deflection sweep at trim condition (alpha=0, beta=0)
-        control_deflections = [-10.0, -5.0, 0.0, 5.0, 10.0]  # degrees
+        # Extended range to match control limits (±30°)
+        control_deflections = [-30.0, -20.0, -10.0, 0.0, 10.0, 20.0, 30.0]  # degrees
         control_cases = []
 
         logger.info("Running elevon (pitch control) deflection sweep...")
