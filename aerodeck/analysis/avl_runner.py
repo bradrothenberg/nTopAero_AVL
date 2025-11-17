@@ -169,6 +169,10 @@ class AVLAnalysis:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Create subdirectory for AVL output files
+        avl_output_dir = output_dir / "avl_outputs"
+        avl_output_dir.mkdir(parents=True, exist_ok=True)
+
         for i, case in enumerate(run_cases):
             self.logger.progress(
                 f"Running case {case.name}",
@@ -176,13 +180,13 @@ class AVLAnalysis:
                 len(run_cases)
             )
 
-            # Create unique command file for this case
-            cmd_file = output_dir / f"{case.name}_commands.txt"
-            self._create_command_file(cmd_file, case, output_dir)
+            # Create unique command file for this case in the subdirectory
+            cmd_file = avl_output_dir / f"{case.name}_commands.txt"
+            self._create_command_file(cmd_file, case, avl_output_dir)
 
             # Execute AVL
             try:
-                result = self._run_avl_case(input_file, cmd_file, output_dir, case)
+                result = self._run_avl_case(input_file, cmd_file, avl_output_dir, case)
                 results[case.name] = result
             except Exception as e:
                 self.logger.warning(f"Case {case.name} failed: {e}")
