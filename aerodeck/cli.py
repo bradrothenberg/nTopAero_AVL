@@ -287,7 +287,7 @@ def generate(
                     alpha_range=(-5.0, 15.0),
                     alpha_step=1.0,
                     mach=mach,
-                    n_iter=100
+                    n_iter=150
                 )
             else:
                 # Fallback to NACA 0012
@@ -299,7 +299,7 @@ def generate(
                     alpha_range=(-5.0, 15.0),
                     alpha_step=1.0,
                     mach=mach,
-                    n_iter=100
+                    n_iter=150
                 )
 
             # Save polars to CSV

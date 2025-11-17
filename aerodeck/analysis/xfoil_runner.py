@@ -433,6 +433,10 @@ class XFOILRunner:
 
         commands = [
             f"LOAD {airfoil_file_unix}",  # Load airfoil from file
+            "PPAR",  # Panel parameters for better convergence
+            "N 160",  # Use 160 panels (good balance of speed/accuracy)
+            "",  # Accept
+            "",  # Exit PPAR
             "OPER",  # Enter OPER menu
             f"ITER {n_iter}",  # Set max iterations
             f"VISC {reynolds}",  # Set Reynolds number
