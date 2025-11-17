@@ -63,9 +63,17 @@ aerodeck generate /path/to/ntop_export/ --config config.yaml
 
 ### 3. View Results
 
+The generator automatically creates both a JSON aerodeck and a PDF report.
+
 ```bash
-# View generated aerodeck
-aerodeck view ./results/aerodeck_6dof.json
+# View the JSON aerodeck contents
+aerodeck view ./results/{aircraft_name}_aerodeck.json
+
+# Open the PDF report (automatically generated)
+# Location: ./results/{aircraft_name}_aerodeck.pdf
+
+# Or regenerate the report manually
+aerodeck report ./results/{aircraft_name}_aerodeck.json
 ```
 
 ## Command Line Interface
@@ -134,6 +142,36 @@ aerodeck view DECK_FILE
 ```bash
 aerodeck view ./results/aerodeck_6dof.json
 ```
+
+### `aerodeck report`
+
+Generate a comprehensive PDF report from an existing aerodeck JSON file.
+
+```bash
+aerodeck report DECK_FILE [OPTIONS]
+
+Options:
+  -o, --output PATH    Output PDF file path (default: same location as JSON)
+```
+
+**Example:**
+```bash
+# Generate report from aerodeck JSON
+aerodeck report ./results/group3-nqx-rev1_aerodeck.json
+
+# Specify custom output path
+aerodeck report ./results/my_aerodeck.json -o ./reports/analysis_report.pdf
+```
+
+**What's in the report?**
+- Summary page with metadata, reference geometry, and mass properties
+- Static stability derivatives (CL_α, Cm_α, Cn_β, etc.)
+- Dynamic stability derivatives (CL_q, Cm_q, Cl_p, etc.)
+- Roll-yaw coupling characteristics
+- Dynamic modes analysis (Dutch roll, spiral, roll subsidence)
+- Dutch roll speed sweep
+- Elevon control effectiveness with trim requirements
+- Elevon forces and hinge loading at 10° deflection
 
 ## Configuration
 
@@ -222,11 +260,34 @@ Same format as panel points above.
 
 After running `aerodeck generate`, you'll find these files in the output directory:
 
-1. **`aircraft.avl`** - AVL input file (human-readable geometry)
-2. **`aerodeck_6dof.json`** - Machine-readable aero deck for 6-DOF simulation
-3. **`aerodeck_report.pdf`** - Comprehensive analysis report (Phase 3)
-4. **`aerodeck_summary.md`** - Markdown summary (Phase 3)
-5. **Intermediate files** - AVL/XFOIL output files (if `save_intermediate: true`)
+1. **`{aircraft_name}.avl`** - AVL input file (human-readable geometry definition)
+2. **`{aircraft_name}.mass`** - AVL mass file (mass, CG, inertia tensor)
+3. **`{aircraft_name}_aerodeck.json`** - Machine-readable aero deck for 6-DOF simulation
+4. **`{aircraft_name}_aerodeck.pdf`** - Comprehensive analysis report (auto-generated)
+5. **`avl_outputs/`** - Directory containing all AVL text output files
+6. **`polars/`** - Directory containing XFOIL airfoil polars (CSV format)
+
+### Aerodeck JSON Structure
+
+The `*_aerodeck.json` file contains:
+- **Metadata**: Aircraft name, generation date, version info
+- **Reference geometry**: Wing area, span, chord, CG location
+- **Mass properties**: Mass, moments of inertia, products of inertia
+- **Static stability**: CL_α, Cm_α, Cn_β, neutral point
+- **Dynamic stability**: CL_q, Cm_q, Cl_p, Cn_r, etc.
+- **Control surfaces**: Control effectiveness (Cm_δe, Cl_δa, etc.)
+- **Airfoil polars**: Lift, drag, and moment vs. alpha at various Reynolds numbers
+
+### PDF Report Contents
+
+The automatically generated PDF report includes:
+1. **Summary page**: Metadata, reference geometry, mass properties
+2. **Static stability**: Longitudinal and lateral-directional derivatives
+3. **Dynamic stability**: Pitch, roll, and yaw damping derivatives
+4. **Roll-yaw coupling**: Adverse yaw and proverse roll characteristics
+5. **Dynamic modes**: Dutch roll frequency/damping, spiral stability, roll time constant
+6. **Control effectiveness**: Pitch and roll control authority with trim requirements
+7. **Elevon loading**: Forces and hinge moments at various deflections
 
 ## Development Status
 
@@ -339,7 +400,7 @@ MIT License - see LICENSE file for details
 
 ## Authors
 
-nTop Aero Team
+nTop Team
 
 ## Acknowledgments
 

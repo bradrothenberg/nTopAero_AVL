@@ -272,7 +272,7 @@ class XFOILRunner:
                     input=commands,
                     capture_output=True,
                     text=True,
-                    timeout=60
+                    timeout=30
                 )
 
                 if result.returncode != 0:
@@ -342,7 +342,7 @@ class XFOILRunner:
                     input=commands,
                     capture_output=True,
                     text=True,
-                    timeout=60
+                    timeout=30
                 )
 
                 if result.returncode != 0:
@@ -433,18 +433,10 @@ class XFOILRunner:
 
         commands = [
             f"LOAD {airfoil_file_unix}",  # Load airfoil from file
-            "PPAR",  # Panel parameters for better convergence
-            "N 200",  # Use 200 panels (more resolution)
-            "T 1.0",  # Panel bunching parameter
-            "",  # Accept
-            "",  # Exit PPAR
             "OPER",  # Enter OPER menu
             f"ITER {n_iter}",  # Set max iterations
             f"VISC {reynolds}",  # Set Reynolds number
             f"MACH {mach}",  # Set Mach number
-            "VPAR",  # Viscous parameters
-            "N 9.0",  # Amplification factor (default 9.0, lower = more sensitive to transition)
-            "",  # Exit VPAR
             "PACC",  # Accumulate polar
             str(output_file),  # Polar save file
             "",  # No dump file

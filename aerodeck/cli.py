@@ -284,10 +284,10 @@ def generate(
                 airfoil_polars = xfoil_runner.generate_airfoil_polar(
                     airfoil_file=str(airfoil_file),
                     reynolds_numbers=reynolds_numbers,
-                    alpha_range=(-10.0, 20.0),
-                    alpha_step=0.5,
+                    alpha_range=(-5.0, 15.0),
+                    alpha_step=1.0,
                     mach=mach,
-                    n_iter=200
+                    n_iter=100
                 )
             else:
                 # Fallback to NACA 0012
@@ -296,10 +296,10 @@ def generate(
                 airfoil_polars = xfoil_runner.generate_naca_polar(
                     naca_code=naca_code,
                     reynolds_numbers=reynolds_numbers,
-                    alpha_range=(-10.0, 20.0),
-                    alpha_step=0.5,
+                    alpha_range=(-5.0, 15.0),
+                    alpha_step=1.0,
                     mach=mach,
-                    n_iter=200
+                    n_iter=100
                 )
 
             # Save polars to CSV
