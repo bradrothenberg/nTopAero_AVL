@@ -14,7 +14,8 @@
       "Bash(done)",
       "Bash(timeout 120 aerodeck report:*)",
       "Bash(while [ ! -f \"c:\\Users\\bradrothenberg\\OneDrive - nTop\\OUT\\parts\\nTopAVL\\nTopAero_AVL\\results\\group3-nqx-rev1_aerodeck.json\" ])",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(tree:*)"
     ],
     "deny": [],
     "ask": []
