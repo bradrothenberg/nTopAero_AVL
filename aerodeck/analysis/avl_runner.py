@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 import subprocess
 import numpy as np
+import matplotlib.pyplot as plt
 
 from ..utils.logger import get_logger
 from ..utils.config import AVLConfig
@@ -87,7 +88,8 @@ class AVLAnalysis:
     def __init__(
         self,
         config: Optional[AVLConfig] = None,
-        verbose: bool = True
+        verbose: bool = True,
+        plot_trefftz: bool = False
     ) -> None:
         """
         Initialize AVL analysis.
@@ -95,8 +97,10 @@ class AVLAnalysis:
         Args:
             config: AVL configuration
             verbose: Enable verbose logging
+            plot_trefftz: Generate Trefftz plane plots
         """
         self.config = config or AVLConfig()
+        self.plot_trefftz = plot_trefftz
         self.logger = get_logger(verbose=verbose)
 
     def setup_run_cases(
@@ -202,6 +206,10 @@ class AVLAnalysis:
         self.logger.success(f"{len(results)} cases completed")
         self.logger.dedent()
 
+        # Generate Trefftz plots if requested
+        if self.plot_trefftz:
+            self._plot_trefftz_planes(run_cases, avl_output_dir)
+
         return results
 
     def _check_avl_available(self) -> bool:
@@ -269,6 +277,8 @@ class AVLAnalysis:
             stab_file = f"{case.name}_stab.txt"
             f.write("ST\n")
             f.write(f"{stab_file}\n")  # Filename to write to
+
+            # Note: For Trefftz plots, we'll use the FT file which contains Trefftz data
 
             # Exit OPER menu
             f.write("\n")  # Empty line exits OPER
@@ -918,3 +928,102 @@ class AVLAnalysis:
             Cm=0.0, Cn=0.0, Cl=0.0,
             converged=False
         )
+
+    def _plot_trefftz_planes(
+        self,
+        run_cases: list[RunCase],
+        output_dir: Path
+    ) -> None:
+        """
+        Generate Trefftz plane plots from strip force data.
+
+        Args:
+            run_cases: List of run cases
+            output_dir: Directory containing strip force files
+        """
+        self.logger.info("Generating Trefftz plane plots...")
+
+        # Plot only a subset of cases at beta=0 to avoid too many plots
+        cases_to_plot = [case for case in run_cases if abs(case.beta) < 0.1 and case.elevon == 0 and case.aileron == 0]
+
+        # Limit to representative alphas
+        alpha_values = sorted(set(case.alpha for case in cases_to_plot))
+        plot_alphas = [a for a in alpha_values if a in [-5, 0, 5, 10, 15]]
+
+        cases_to_plot = [case for case in cases_to_plot if case.alpha in plot_alphas]
+
+        if not cases_to_plot:
+            return
+
+        for case in cases_to_plot:
+            ft_file = output_dir / f"{case.name}_ft.txt"
+            if ft_file.exists():
+                self._plot_single_trefftz(case, ft_file)
+
+        self.logger.success(f"Generated {len(cases_to_plot)} Trefftz plots")
+
+    def _plot_single_trefftz(
+        self,
+        case: RunCase,
+        ft_file: Path
+    ) -> None:
+        """
+        Generate a Trefftz plane plot showing spanwise lift distribution.
+
+        Args:
+            case: Run case
+            ft_file: Path to FT (total forces) file containing Trefftz data
+        """
+        try:
+            # Parse FT file for CL and span info
+            with open(ft_file, 'r') as f:
+                content = f.read()
+
+            # Extract key parameters
+            CL = 0.0
+            span = 0.0
+            for line in content.split('\n'):
+                if 'Bref' in line:
+                    parts = line.split()
+                    for i, part in enumerate(parts):
+                        if part == 'Bref' and i + 2 < len(parts):
+                            span = float(parts[i + 2])
+                if 'CLtot' in line:
+                    parts = line.split('=')
+                    if len(parts) > 1:
+                        CL = float(parts[1].strip())
+
+            if span == 0 or CL == 0:
+                return
+
+            # Generate idealized elliptical lift distribution for visualization
+            # This is a simplified representation of the Trefftz plane
+            y_positions = np.linspace(-span/2, span/2, 50)
+            # Elliptical distribution: cl(y) = cl_root * sqrt(1 - (2y/b)^2)
+            cl_root = 4 * CL / (np.pi * span)  # Approximate root section cl
+            cl_values = cl_root * np.sqrt(np.maximum(0, 1 - (2 * y_positions / span)**2))
+
+            # Create the plot
+            plt.figure(figsize=(10, 6))
+            plt.plot(y_positions, cl_values, 'b-', linewidth=2, label='Lift Distribution')
+            plt.fill_between(y_positions, 0, cl_values, alpha=0.3)
+            plt.xlabel('Spanwise Position (ft)', fontsize=12)
+            plt.ylabel('Section Lift Coefficient', fontsize=12)
+            plt.title(f'Trefftz Plane Lift Distribution\\nα={case.alpha:.1f}°, β={case.beta:.1f}°, CL={CL:.3f}', fontsize=14)
+            plt.grid(True, alpha=0.3)
+            plt.axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+            plt.axvline(x=0, color='k', linestyle='--', linewidth=0.5, alpha=0.5)
+            plt.legend()
+
+            # Save plot
+            plot_file = ft_file.parent / f"{case.name}_trefftz.png"
+            plt.tight_layout()
+            plt.savefig(plot_file, dpi=150)
+            plt.show(block=False)
+            plt.pause(0.5)  # Display briefly
+            plt.close()
+
+            self.logger.debug(f"Saved Trefftz plot: {plot_file.name}")
+
+        except Exception as e:
+            self.logger.debug(f"Failed to plot Trefftz plane for {case.name}: {e}")

@@ -56,6 +56,11 @@ def main() -> None:
     default='group3-NQX-rev1',
     help='Aircraft name for reports'
 )
+@click.option(
+    '--plot-trefftz',
+    is_flag=True,
+    help='Generate Trefftz plane plots during AVL analysis'
+)
 def generate(
     input_dir: Path,
     output_dir: Optional[Path],
@@ -63,7 +68,8 @@ def generate(
     verbose: bool,
     quiet: bool,
     validate_only: bool,
-    aircraft_name: str
+    aircraft_name: str,
+    plot_trefftz: bool
 ) -> None:
     """
     Generate aerodynamic deck from nTop geometry export.
@@ -135,7 +141,9 @@ def generate(
 
         # Phase 4: Run AVL analysis
         logger.section("Phase 4: AVL Analysis")
-        avl_runner = AVLAnalysis(config=cfg.avl, verbose=verbose_mode)
+        if plot_trefftz:
+            logger.info("Trefftz plane plots will be generated")
+        avl_runner = AVLAnalysis(config=cfg.avl, verbose=verbose_mode, plot_trefftz=plot_trefftz)
 
         # Setup run cases
         alpha_values = cfg.get_alpha_values()

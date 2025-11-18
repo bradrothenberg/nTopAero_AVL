@@ -400,7 +400,7 @@ MIT License - see LICENSE file for details
 
 ## Authors
 
-nTop Team
+Claude Code & Brad Rothenberg
 
 ## Acknowledgments
 
