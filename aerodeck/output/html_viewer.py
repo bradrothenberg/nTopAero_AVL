@@ -85,7 +85,7 @@ class HTMLViewer:
             margin: 0 auto;
             background: #0a0a0a;
             border: 3px solid #00ff00;
-            box-shadow: 0 0 20px #00ff00, inset 0 0 20px rgba(0,255,0,0.1);
+            box-shadow: 0 0 5px rgba(0,255,0,0.3);
         }}
 
         .header {{
@@ -100,7 +100,7 @@ class HTMLViewer:
             font-size: 2em;
             margin-bottom: 5px;
             letter-spacing: 3px;
-            text-shadow: 0 0 10px #00ff00;
+            text-shadow: none;
         }}
 
         .header p {{
@@ -136,12 +136,10 @@ class HTMLViewer:
 
         .tab:hover {{
             background: #003300;
-            box-shadow: 0 0 10px #00ff00;
         }}
 
         .tab.active {{
             background: #001a00;
-            box-shadow: inset 0 0 10px #00ff00;
             font-weight: bold;
         }}
 
@@ -164,7 +162,6 @@ class HTMLViewer:
             border: 2px solid #00ff00;
             padding: 15px;
             margin-bottom: 15px;
-            box-shadow: 0 0 10px rgba(0,255,0,0.3);
         }}
 
         .card h3 {{
@@ -174,7 +171,6 @@ class HTMLViewer:
             letter-spacing: 2px;
             border-bottom: 1px solid #00ff00;
             padding-bottom: 5px;
-            text-shadow: 0 0 5px #00ff00;
         }}
 
         .grid {{
@@ -188,7 +184,6 @@ class HTMLViewer:
             background: #001a00;
             padding: 15px;
             border: 1px solid #00ff00;
-            box-shadow: inset 0 0 10px rgba(0,255,0,0.2);
         }}
 
         .metric-label {{
@@ -202,7 +197,6 @@ class HTMLViewer:
             color: #00ff00;
             font-size: 1.3em;
             font-weight: bold;
-            text-shadow: 0 0 5px #00ff00;
         }}
 
         .metric-unit {{
@@ -216,7 +210,6 @@ class HTMLViewer:
             background: #000000;
             border: 2px solid #00ff00;
             padding: 10px;
-            box-shadow: inset 0 0 20px rgba(0,255,0,0.1);
         }}
 
         table {{
@@ -386,11 +379,77 @@ class HTMLViewer:
         S_ref_ft2 = reference.get('S_ref_ft2', reference.get('S_ref', 0))
         b_ref_ft = reference.get('b_ref_ft', reference.get('b_ref', 0))
         c_ref_ft = reference.get('c_ref_ft', reference.get('c_ref', 0))
+        x_ref_ft = reference.get('x_ref_ft', 0)
+        y_ref_ft = reference.get('y_ref_ft', 0)
+        z_ref_ft = reference.get('z_ref_ft', 0)
 
         # Calculate aspect ratio
         aspect_ratio = (b_ref_ft ** 2 / S_ref_ft2) if S_ref_ft2 > 0 else 0
 
+        # Create simplified planform SVG
+        # Scale factor to fit in viewport
+        scale = 40  # pixels per foot
+        svg_width = int(b_ref_ft * scale) + 100
+        svg_height = int(c_ref_ft * scale) + 100
+
+        # Wing positions (simplified rectangular planform)
+        wing_half_span = b_ref_ft / 2 * scale
+        wing_chord = c_ref_ft * scale
+        center_x = svg_width / 2
+        center_y = svg_height / 2
+
+        # CG marker
+        cg_x = center_x
+        cg_y = center_y
+
         return f"""
+            <div class="card">
+                <h3>Aircraft Planform View</h3>
+                <div style="text-align: center; margin: 20px 0;">
+                    <svg width="{svg_width}" height="{svg_height}" style="background: #000000; border: 2px solid #00ff00;">
+                        <!-- Coordinate axes -->
+                        <line x1="50" y1="{center_y}" x2="{svg_width-50}" y2="{center_y}"
+                              stroke="#003300" stroke-width="1" stroke-dasharray="5,5"/>
+                        <line x1="{center_x}" y1="50" x2="{center_x}" y2="{svg_height-50}"
+                              stroke="#003300" stroke-width="1" stroke-dasharray="5,5"/>
+
+                        <!-- Wing planform (simplified) -->
+                        <rect x="{center_x - wing_half_span}" y="{center_y - wing_chord/2}"
+                              width="{wing_half_span * 2}" height="{wing_chord}"
+                              fill="none" stroke="#00ff00" stroke-width="2"/>
+
+                        <!-- Centerline -->
+                        <line x1="{center_x}" y1="{center_y - wing_chord/2}"
+                              x2="{center_x}" y2="{center_y + wing_chord/2}"
+                              stroke="#00ff00" stroke-width="1"/>
+
+                        <!-- CG marker -->
+                        <circle cx="{cg_x}" cy="{cg_y}" r="5" fill="#00ff00"/>
+                        <text x="{cg_x + 10}" y="{cg_y + 5}" fill="#00ff00" font-family="Courier New" font-size="12">CG</text>
+
+                        <!-- Dimension lines and labels -->
+                        <line x1="{center_x - wing_half_span}" y1="{center_y + wing_chord/2 + 20}"
+                              x2="{center_x + wing_half_span}" y2="{center_y + wing_chord/2 + 20}"
+                              stroke="#00cc00" stroke-width="1"/>
+                        <text x="{center_x}" y="{center_y + wing_chord/2 + 35}"
+                              fill="#00cc00" font-family="Courier New" font-size="11" text-anchor="middle">
+                              b = {b_ref_ft:.2f} ft</text>
+
+                        <line x1="{center_x - wing_half_span - 20}" y1="{center_y - wing_chord/2}"
+                              x2="{center_x - wing_half_span - 20}" y2="{center_y + wing_chord/2}"
+                              stroke="#00cc00" stroke-width="1"/>
+                        <text x="{center_x - wing_half_span - 30}" y="{center_y}"
+                              fill="#00cc00" font-family="Courier New" font-size="11" text-anchor="middle"
+                              transform="rotate(-90 {center_x - wing_half_span - 30} {center_y})">
+                              c = {c_ref_ft:.2f} ft</text>
+
+                        <!-- Axes labels -->
+                        <text x="{svg_width - 40}" y="{center_y - 10}" fill="#00cc00" font-family="Courier New" font-size="11">+Y</text>
+                        <text x="{center_x + 10}" y="40" fill="#00cc00" font-family="Courier New" font-size="11">+X</text>
+                    </svg>
+                </div>
+            </div>
+
             <div class="card">
                 <h3>Reference Geometry</h3>
                 <table>
