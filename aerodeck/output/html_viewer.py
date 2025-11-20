@@ -72,77 +72,82 @@ class HTMLViewer:
         }}
 
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: #333;
+            font-family: 'Courier New', 'Consolas', 'Monaco', monospace;
+            background: #000000;
+            color: #00ff00;
             min-height: 100vh;
             padding: 20px;
+            line-height: 1.4;
         }}
 
         .container {{
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            overflow: hidden;
+            background: #0a0a0a;
+            border: 3px solid #00ff00;
+            box-shadow: 0 0 20px #00ff00, inset 0 0 20px rgba(0,255,0,0.1);
         }}
 
         .header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 40px;
+            background: #000000;
+            color: #00ff00;
+            padding: 20px;
+            border-bottom: 3px double #00ff00;
             text-align: center;
         }}
 
         .header h1 {{
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+            font-size: 2em;
+            margin-bottom: 5px;
+            letter-spacing: 3px;
+            text-shadow: 0 0 10px #00ff00;
         }}
 
         .header p {{
-            font-size: 1.1em;
-            opacity: 0.9;
+            font-size: 0.9em;
+            opacity: 0.8;
+            letter-spacing: 2px;
         }}
 
         .content {{
-            padding: 40px;
+            padding: 20px;
         }}
 
         .tabs {{
             display: flex;
-            gap: 10px;
-            border-bottom: 2px solid #e0e0e0;
-            margin-bottom: 30px;
+            gap: 0;
+            border-bottom: 3px solid #00ff00;
+            margin-bottom: 20px;
             flex-wrap: wrap;
         }}
 
         .tab {{
-            padding: 15px 30px;
+            padding: 10px 20px;
             cursor: pointer;
-            border: none;
-            background: none;
-            font-size: 1em;
-            color: #666;
-            border-bottom: 3px solid transparent;
-            transition: all 0.3s;
+            border: 2px solid #00ff00;
+            border-bottom: none;
+            background: #000000;
+            font-size: 0.9em;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            transition: all 0.2s;
+            letter-spacing: 1px;
         }}
 
         .tab:hover {{
-            background: #f5f5f5;
-            color: #333;
+            background: #003300;
+            box-shadow: 0 0 10px #00ff00;
         }}
 
         .tab.active {{
-            color: #667eea;
-            border-bottom-color: #667eea;
-            font-weight: 600;
+            background: #001a00;
+            box-shadow: inset 0 0 10px #00ff00;
+            font-weight: bold;
         }}
 
         .tab-content {{
             display: none;
-            animation: fadeIn 0.3s;
+            animation: fadeIn 0.2s;
         }}
 
         .tab-content.active {{
@@ -150,94 +155,105 @@ class HTMLViewer:
         }}
 
         @keyframes fadeIn {{
-            from {{ opacity: 0; transform: translateY(10px); }}
-            to {{ opacity: 1; transform: translateY(0); }}
+            from {{ opacity: 0; }}
+            to {{ opacity: 1; }}
         }}
 
         .card {{
-            background: white;
-            border-radius: 10px;
-            padding: 25px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            border-left: 4px solid #667eea;
+            background: #000000;
+            border: 2px solid #00ff00;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 0 10px rgba(0,255,0,0.3);
         }}
 
         .card h3 {{
-            color: #667eea;
-            margin-bottom: 20px;
-            font-size: 1.5em;
+            color: #00ff00;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            letter-spacing: 2px;
+            border-bottom: 1px solid #00ff00;
+            padding-bottom: 5px;
+            text-shadow: 0 0 5px #00ff00;
         }}
 
         .grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
+            gap: 15px;
+            margin-top: 15px;
         }}
 
         .metric {{
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            border-left: 3px solid #667eea;
+            background: #001a00;
+            padding: 15px;
+            border: 1px solid #00ff00;
+            box-shadow: inset 0 0 10px rgba(0,255,0,0.2);
         }}
 
         .metric-label {{
-            color: #666;
-            font-size: 0.9em;
+            color: #00cc00;
+            font-size: 0.8em;
             margin-bottom: 5px;
+            letter-spacing: 1px;
         }}
 
         .metric-value {{
-            color: #333;
-            font-size: 1.5em;
-            font-weight: 600;
+            color: #00ff00;
+            font-size: 1.3em;
+            font-weight: bold;
+            text-shadow: 0 0 5px #00ff00;
         }}
 
         .metric-unit {{
-            color: #999;
-            font-size: 0.9em;
+            color: #00cc00;
+            font-size: 0.8em;
             margin-left: 5px;
         }}
 
         .plot-container {{
-            margin: 20px 0;
-            background: white;
-            border-radius: 8px;
+            margin: 15px 0;
+            background: #000000;
+            border: 2px solid #00ff00;
             padding: 10px;
+            box-shadow: inset 0 0 20px rgba(0,255,0,0.1);
         }}
 
         table {{
             width: 100%;
             border-collapse: collapse;
-            margin-top: 20px;
+            margin-top: 15px;
+            border: 2px solid #00ff00;
         }}
 
         th {{
-            background: #667eea;
-            color: white;
-            padding: 12px;
+            background: #001a00;
+            color: #00ff00;
+            padding: 10px;
             text-align: left;
-            font-weight: 600;
+            font-weight: bold;
+            border: 1px solid #00ff00;
+            letter-spacing: 1px;
         }}
 
         td {{
-            padding: 12px;
-            border-bottom: 1px solid #e0e0e0;
+            padding: 8px;
+            border: 1px solid #003300;
+            color: #00ff00;
         }}
 
         tr:hover {{
-            background: #f8f9fa;
+            background: #001a00;
         }}
 
         .footer {{
             text-align: center;
-            padding: 20px;
-            color: #666;
-            font-size: 0.9em;
-            border-top: 1px solid #e0e0e0;
-            margin-top: 40px;
+            padding: 15px;
+            color: #00cc00;
+            font-size: 0.8em;
+            border-top: 3px double #00ff00;
+            margin-top: 20px;
+            letter-spacing: 1px;
         }}
     </style>
 </head>
@@ -500,18 +516,35 @@ class HTMLViewer:
 
     def _build_polars_tab(self) -> str:
         """Build polars tab content."""
+        polars_data = self.data.get('airfoil_polars', {})
+        airfoil_name = polars_data.get('airfoil_name', 'Unknown')
+
         return f"""
             <div class="card">
-                <h3>Airfoil Polars</h3>
+                <h3>Airfoil: {airfoil_name}</h3>
                 <div class="plot-container">
-                    <div id="polars-plot"></div>
+                    <div id="cl-alpha-plot"></div>
                 </div>
             </div>
 
             <div class="card">
-                <h3>Drag Polar</h3>
+                <h3>Drag Polar (CL vs CD)</h3>
                 <div class="plot-container">
                     <div id="drag-polar-plot"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Lift-to-Drag Ratio</h3>
+                <div class="plot-container">
+                    <div id="ld-ratio-plot"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Moment Coefficient</h3>
+                <div class="plot-container">
+                    <div id="cm-alpha-plot"></div>
                 </div>
             </div>
         """
@@ -552,24 +585,75 @@ class HTMLViewer:
         else:
             Cl_da_per_deg = 0
 
+        # Extract airfoil polar data
+        polars_data = self.data.get('airfoil_polars', {})
+        polars_list = polars_data.get('polars', [])
+
+        # Prepare polar data for plots
+        polar_traces = []
+        for polar in polars_list:
+            reynolds = polar.get('reynolds', 0)
+            alpha = polar.get('alpha', [])
+            CL = polar.get('CL', [])
+            CD = polar.get('CD', [])
+            CM = polar.get('CM', [])
+
+            # Format Reynolds number for legend
+            re_str = f"Re={reynolds:.2e}"
+
+            polar_traces.append({
+                'reynolds': reynolds,
+                're_str': re_str,
+                'alpha': alpha,
+                'CL': CL,
+                'CD': CD,
+                'CM': CM
+            })
+
         return f"""
+        // CAD-style layout template
+        const cadLayout = {{
+            paper_bgcolor: '#000000',
+            plot_bgcolor: '#000000',
+            font: {{
+                family: 'Courier New, monospace',
+                size: 11,
+                color: '#00ff00'
+            }},
+            title: {{
+                font: {{ size: 13, color: '#00ff00' }}
+            }},
+            xaxis: {{
+                gridcolor: '#003300',
+                linecolor: '#00ff00',
+                tickcolor: '#00ff00',
+                zerolinecolor: '#00ff00'
+            }},
+            yaxis: {{
+                gridcolor: '#003300',
+                linecolor: '#00ff00',
+                tickcolor: '#00ff00',
+                zerolinecolor: '#00ff00'
+            }},
+            height: 350
+        }};
+
         // Static derivatives bar chart
         const staticData = [{{
             x: ['CL_α', 'Cm_α', 'Cn_β', 'Cl_β'],
             y: [{longitudinal.get('CL_alpha_per_rad', 0)}, {longitudinal.get('Cm_alpha_per_rad', 0)},
                 {lateral_directional.get('Cn_beta_per_rad', 0)}, {lateral_directional.get('Cl_beta_per_rad', 0)}],
             type: 'bar',
-            marker: {{ color: ['#667eea', '#764ba2', '#f093fb', '#f5576c'] }}
+            marker: {{ color: '#00ff00', line: {{ color: '#00ff00', width: 1 }} }}
         }}];
 
-        const staticLayout = {{
-            title: 'Static Stability Derivatives',
-            xaxis: {{ title: 'Derivative' }},
-            yaxis: {{ title: 'Value (/rad)' }},
-            height: 400
-        }};
+        const staticLayout = Object.assign({{}}, cadLayout, {{
+            title: 'STATIC STABILITY DERIVATIVES',
+            xaxis: Object.assign({{}}, cadLayout.xaxis, {{ title: 'Derivative' }}),
+            yaxis: Object.assign({{}}, cadLayout.yaxis, {{ title: 'Value (/rad)' }})
+        }});
 
-        Plotly.newPlot('static-derivatives-plot', staticData, staticLayout, {{responsive: true}});
+        Plotly.newPlot('static-derivatives-plot', staticData, staticLayout, {{responsive: true, displayModeBar: false}});
 
         // Dynamic derivatives bar chart
         const dynamicData = [{{
@@ -577,17 +661,16 @@ class HTMLViewer:
             y: [{pitch_rate.get('CL_q_per_rad', 0)}, {pitch_rate.get('Cm_q_per_rad', 0)},
                 {roll_rate.get('Cl_p_per_rad', 0)}, {yaw_rate.get('Cn_r_per_rad', 0)}],
             type: 'bar',
-            marker: {{ color: ['#667eea', '#764ba2', '#f093fb', '#f5576c'] }}
+            marker: {{ color: '#00ff00', line: {{ color: '#00ff00', width: 1 }} }}
         }}];
 
-        const dynamicLayout = {{
-            title: 'Dynamic Stability Derivatives',
-            xaxis: {{ title: 'Derivative' }},
-            yaxis: {{ title: 'Value (/rad)' }},
-            height: 400
-        }};
+        const dynamicLayout = Object.assign({{}}, cadLayout, {{
+            title: 'DYNAMIC STABILITY DERIVATIVES',
+            xaxis: Object.assign({{}}, cadLayout.xaxis, {{ title: 'Derivative' }}),
+            yaxis: Object.assign({{}}, cadLayout.yaxis, {{ title: 'Value (/rad)' }})
+        }});
 
-        Plotly.newPlot('dynamic-derivatives-plot', dynamicData, dynamicLayout, {{responsive: true}});
+        Plotly.newPlot('dynamic-derivatives-plot', dynamicData, dynamicLayout, {{responsive: true, displayModeBar: false}});
 
         // Elevon effectiveness
         const elevonData = [{{
@@ -596,17 +679,18 @@ class HTMLViewer:
             type: 'scatter',
             mode: 'lines+markers',
             name: 'Cm',
-            line: {{ color: '#667eea', width: 3 }}
+            line: {{ color: '#00ff00', width: 2 }},
+            marker: {{ color: '#00ff00', size: 6, symbol: 'square' }}
         }}];
 
-        const elevonLayout = {{
-            title: 'Elevon Pitch Effectiveness',
-            xaxis: {{ title: 'Elevon Deflection (deg)' }},
-            yaxis: {{ title: 'Pitch Moment Coefficient' }},
-            height: 400
-        }};
+        const elevonLayout = Object.assign({{}}, cadLayout, {{
+            title: 'ELEVON PITCH EFFECTIVENESS',
+            xaxis: Object.assign({{}}, cadLayout.xaxis, {{ title: 'Elevon Deflection (deg)' }}),
+            yaxis: Object.assign({{}}, cadLayout.yaxis, {{ title: 'Pitch Moment Coefficient' }}),
+            showlegend: false
+        }});
 
-        Plotly.newPlot('elevon-effectiveness-plot', elevonData, elevonLayout, {{responsive: true}});
+        Plotly.newPlot('elevon-effectiveness-plot', elevonData, elevonLayout, {{responsive: true, displayModeBar: false}});
 
         // Aileron effectiveness
         const aileronData = [{{
@@ -615,53 +699,104 @@ class HTMLViewer:
             type: 'scatter',
             mode: 'lines+markers',
             name: 'Cl',
-            line: {{ color: '#764ba2', width: 3 }}
+            line: {{ color: '#00ff00', width: 2 }},
+            marker: {{ color: '#00ff00', size: 6, symbol: 'square' }}
         }}];
 
-        const aileronLayout = {{
-            title: 'Aileron Roll Effectiveness',
-            xaxis: {{ title: 'Aileron Deflection (deg)' }},
-            yaxis: {{ title: 'Roll Moment Coefficient' }},
-            height: 400
-        }};
+        const aileronLayout = Object.assign({{}}, cadLayout, {{
+            title: 'AILERON ROLL EFFECTIVENESS',
+            xaxis: Object.assign({{}}, cadLayout.xaxis, {{ title: 'Aileron Deflection (deg)' }}),
+            yaxis: Object.assign({{}}, cadLayout.yaxis, {{ title: 'Roll Moment Coefficient' }}),
+            showlegend: false
+        }});
 
-        Plotly.newPlot('aileron-effectiveness-plot', aileronData, aileronLayout, {{responsive: true}});
+        Plotly.newPlot('aileron-effectiveness-plot', aileronData, aileronLayout, {{responsive: true, displayModeBar: false}});
 
-        // Sample polars plot (simplified)
-        const polarsData = [{{
-            x: [-5, -4, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-            y: [-0.39, -0.27, -0.05, 0.07, 0.18, 0.29, 0.40, 0.51, 0.62, 0.73, 0.84, 0.94, 1.05, 1.15, 1.25],
+        // Airfoil Polars - CL vs Alpha
+        const colors = ['#00ff00', '#00cc00', '#00aa00', '#008800'];
+        const clAlphaData = {json.dumps(polar_traces)}.map((polar, i) => ({{
+            x: polar.alpha,
+            y: polar.CL,
             type: 'scatter',
             mode: 'lines+markers',
-            name: 'CL vs α',
-            line: {{ color: '#667eea', width: 3 }}
-        }}];
+            name: polar.re_str,
+            line: {{ color: colors[i % colors.length], width: 2 }},
+            marker: {{ color: colors[i % colors.length], size: 4, symbol: 'circle' }}
+        }}));
 
-        const polarsLayout = {{
-            title: 'Lift Coefficient vs Angle of Attack',
-            xaxis: {{ title: 'Alpha (deg)' }},
-            yaxis: {{ title: 'CL' }},
-            height: 400
-        }};
+        const clAlphaLayout = Object.assign({{}}, cadLayout, {{
+            title: 'LIFT COEFFICIENT vs ANGLE OF ATTACK',
+            xaxis: Object.assign({{}}, cadLayout.xaxis, {{ title: 'Alpha (deg)' }}),
+            yaxis: Object.assign({{}}, cadLayout.yaxis, {{ title: 'CL' }}),
+            showlegend: true,
+            legend: {{ font: {{ color: '#00ff00' }}, bgcolor: '#000000', bordercolor: '#00ff00', borderwidth: 1 }}
+        }});
 
-        Plotly.newPlot('polars-plot', polarsData, polarsLayout, {{responsive: true}});
+        Plotly.newPlot('cl-alpha-plot', clAlphaData, clAlphaLayout, {{responsive: true, displayModeBar: false}});
 
-        // Drag polar
-        const dragPolarData = [{{
-            x: [0.005, 0.006, 0.007, 0.008, 0.009, 0.010, 0.012, 0.015, 0.020, 0.030],
-            y: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.5, 1.5],
+        // Drag Polar - CL vs CD
+        const dragPolarData = {json.dumps(polar_traces)}.map((polar, i) => ({{
+            x: polar.CD,
+            y: polar.CL,
             type: 'scatter',
             mode: 'lines+markers',
-            name: 'CL vs CD',
-            line: {{ color: '#764ba2', width: 3 }}
-        }}];
+            name: polar.re_str,
+            line: {{ color: colors[i % colors.length], width: 2 }},
+            marker: {{ color: colors[i % colors.length], size: 4, symbol: 'circle' }}
+        }}));
 
-        const dragPolarLayout = {{
-            title: 'Drag Polar (CL vs CD)',
-            xaxis: {{ title: 'CD' }},
-            yaxis: {{ title: 'CL' }},
-            height: 400
-        }};
+        const dragPolarLayout = Object.assign({{}}, cadLayout, {{
+            title: 'DRAG POLAR (CL vs CD)',
+            xaxis: Object.assign({{}}, cadLayout.xaxis, {{ title: 'CD' }}),
+            yaxis: Object.assign({{}}, cadLayout.yaxis, {{ title: 'CL' }}),
+            showlegend: true,
+            legend: {{ font: {{ color: '#00ff00' }}, bgcolor: '#000000', bordercolor: '#00ff00', borderwidth: 1 }}
+        }});
 
-        Plotly.newPlot('drag-polar-plot', dragPolarData, dragPolarLayout, {{responsive: true}});
+        Plotly.newPlot('drag-polar-plot', dragPolarData, dragPolarLayout, {{responsive: true, displayModeBar: false}});
+
+        // L/D Ratio
+        const ldRatioData = {json.dumps(polar_traces)}.map((polar, i) => {{
+            const ld = polar.CL.map((cl, j) => polar.CD[j] !== 0 ? cl / polar.CD[j] : 0);
+            return {{
+                x: polar.alpha,
+                y: ld,
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: polar.re_str,
+                line: {{ color: colors[i % colors.length], width: 2 }},
+                marker: {{ color: colors[i % colors.length], size: 4, symbol: 'circle' }}
+            }};
+        }});
+
+        const ldRatioLayout = Object.assign({{}}, cadLayout, {{
+            title: 'LIFT-TO-DRAG RATIO',
+            xaxis: Object.assign({{}}, cadLayout.xaxis, {{ title: 'Alpha (deg)' }}),
+            yaxis: Object.assign({{}}, cadLayout.yaxis, {{ title: 'L/D' }}),
+            showlegend: true,
+            legend: {{ font: {{ color: '#00ff00' }}, bgcolor: '#000000', bordercolor: '#00ff00', borderwidth: 1 }}
+        }});
+
+        Plotly.newPlot('ld-ratio-plot', ldRatioData, ldRatioLayout, {{responsive: true, displayModeBar: false}});
+
+        // Moment Coefficient
+        const cmAlphaData = {json.dumps(polar_traces)}.map((polar, i) => ({{
+            x: polar.alpha,
+            y: polar.CM,
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: polar.re_str,
+            line: {{ color: colors[i % colors.length], width: 2 }},
+            marker: {{ color: colors[i % colors.length], size: 4, symbol: 'circle' }}
+        }}));
+
+        const cmAlphaLayout = Object.assign({{}}, cadLayout, {{
+            title: 'MOMENT COEFFICIENT vs ANGLE OF ATTACK',
+            xaxis: Object.assign({{}}, cadLayout.xaxis, {{ title: 'Alpha (deg)' }}),
+            yaxis: Object.assign({{}}, cadLayout.yaxis, {{ title: 'CM' }}),
+            showlegend: true,
+            legend: {{ font: {{ color: '#00ff00' }}, bgcolor: '#000000', bordercolor: '#00ff00', borderwidth: 1 }}
+        }});
+
+        Plotly.newPlot('cm-alpha-plot', cmAlphaData, cmAlphaLayout, {{responsive: true, displayModeBar: false}});
         """
