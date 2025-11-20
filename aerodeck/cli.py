@@ -654,6 +654,52 @@ def report(
 
 
 @main.command()
+@click.argument('aerodeck_file', type=click.Path(exists=True, path_type=Path))
+@click.option(
+    '--output', '-o',
+    type=click.Path(path_type=Path),
+    default=None,
+    help='Output HTML file path (default: same location as JSON)'
+)
+@click.option(
+    '--no-browser',
+    is_flag=True,
+    help='Do not open browser automatically'
+)
+def html(
+    aerodeck_file: Path,
+    output: Optional[Path],
+    no_browser: bool
+) -> None:
+    """Generate interactive HTML viewer from aerodeck JSON file."""
+    from .output.html_viewer import HTMLViewer
+
+    try:
+        click.echo(f"\n{'='*60}")
+        click.echo("  nTop AeroDeck HTML Viewer")
+        click.echo(f"{'='*60}\n")
+
+        click.echo(f"Loading aerodeck: {aerodeck_file.name}")
+
+        viewer = HTMLViewer(aerodeck_file)
+        html_path = viewer.generate_html(output_path=output, open_browser=not no_browser)
+
+        click.echo(f"[OK] HTML viewer generated: {html_path}")
+
+        if not no_browser:
+            click.echo(f"[OK] Opening in browser...")
+
+        click.echo(f"\n{'='*60}\n")
+
+    except FileNotFoundError:
+        click.echo(f"Error: File not found: {aerodeck_file}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error generating HTML viewer: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command()
 def version() -> None:
     """Show version information."""
     click.echo(f"nTop AeroDeck Generator v{__version__}")
