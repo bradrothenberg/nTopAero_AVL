@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Any
 import webbrowser
 from datetime import datetime
+import numpy as np
 
 
 class HTMLViewer:
@@ -50,9 +51,11 @@ class HTMLViewer:
         metadata = self.data.get('metadata', {})
         reference = self.data.get('reference_geometry', {})
         mass = self.data.get('mass_properties', {})
-        static = self.data.get('static_stability', {})
-        dynamic = self.data.get('dynamic_stability', {})
-        control = self.data.get('control_effectiveness', {})
+
+        # Handle nested aerodynamics structure
+        aero = self.data.get('aerodynamics', {})
+        static_stab = aero.get('static_stability', {})
+        dynamic_stab = aero.get('dynamic_stability', {})
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -264,11 +267,11 @@ class HTMLViewer:
             </div>
 
             <div id="stability" class="tab-content">
-                {self._build_stability_tab(static, dynamic)}
+                {self._build_stability_tab(static_stab, dynamic_stab)}
             </div>
 
             <div id="control" class="tab-content">
-                {self._build_control_tab(control)}
+                {self._build_control_tab(aero)}
             </div>
 
             <div id="polars" class="tab-content">
@@ -304,6 +307,14 @@ class HTMLViewer:
 
     def _build_overview_tab(self, metadata: Dict, reference: Dict, mass: Dict) -> str:
         """Build overview tab content."""
+        # Extract reference geometry with correct key names
+        S_ref_ft2 = reference.get('S_ref_ft2', reference.get('S_ref', 0))
+        b_ref_ft = reference.get('b_ref_ft', reference.get('b_ref', 0))
+        c_ref_ft = reference.get('c_ref_ft', reference.get('c_ref', 0))
+
+        # Calculate aspect ratio
+        aspect_ratio = (b_ref_ft ** 2 / S_ref_ft2) if S_ref_ft2 > 0 else 0
+
         return f"""
             <div class="card">
                 <h3>Aircraft Summary</h3>
@@ -314,19 +325,19 @@ class HTMLViewer:
                     </div>
                     <div class="metric">
                         <div class="metric-label">Version</div>
-                        <div class="metric-value">{metadata.get('version', 'N/A')}</div>
+                        <div class="metric-value">{metadata.get('generator_version', metadata.get('version', 'N/A'))}</div>
                     </div>
                     <div class="metric">
                         <div class="metric-label">Reference Area</div>
-                        <div class="metric-value">{reference.get('wing_area_ft2', 0):.2f}<span class="metric-unit">ft²</span></div>
+                        <div class="metric-value">{S_ref_ft2:.2f}<span class="metric-unit">ft²</span></div>
                     </div>
                     <div class="metric">
                         <div class="metric-label">Wingspan</div>
-                        <div class="metric-value">{reference.get('wingspan_ft', 0):.2f}<span class="metric-unit">ft</span></div>
+                        <div class="metric-value">{b_ref_ft:.2f}<span class="metric-unit">ft</span></div>
                     </div>
                     <div class="metric">
                         <div class="metric-label">Mean Chord</div>
-                        <div class="metric-value">{reference.get('mean_chord_ft', 0):.2f}<span class="metric-unit">ft</span></div>
+                        <div class="metric-value">{c_ref_ft:.2f}<span class="metric-unit">ft</span></div>
                     </div>
                     <div class="metric">
                         <div class="metric-label">Mass</div>
@@ -340,11 +351,11 @@ class HTMLViewer:
                 <div class="grid">
                     <div class="metric">
                         <div class="metric-label">Aspect Ratio</div>
-                        <div class="metric-value">{reference.get('aspect_ratio', 0):.2f}</div>
+                        <div class="metric-value">{aspect_ratio:.2f}</div>
                     </div>
                     <div class="metric">
                         <div class="metric-label">Wing Loading</div>
-                        <div class="metric-value">{(mass.get('mass_lbm', 0) / reference.get('wing_area_ft2', 1)):.1f}<span class="metric-unit">lbm/ft²</span></div>
+                        <div class="metric-value">{(mass.get('mass_lbm', 0) / S_ref_ft2 if S_ref_ft2 > 0 else 0):.1f}<span class="metric-unit">lbm/ft²</span></div>
                     </div>
                 </div>
             </div>
@@ -353,15 +364,25 @@ class HTMLViewer:
     def _build_geometry_tab(self, reference: Dict, mass: Dict) -> str:
         """Build geometry tab content."""
         cg = mass.get('cg_ft', [0, 0, 0])
+        inertia = mass.get('inertia_lbm_ft2', {})
+
+        # Extract reference geometry with correct key names
+        S_ref_ft2 = reference.get('S_ref_ft2', reference.get('S_ref', 0))
+        b_ref_ft = reference.get('b_ref_ft', reference.get('b_ref', 0))
+        c_ref_ft = reference.get('c_ref_ft', reference.get('c_ref', 0))
+
+        # Calculate aspect ratio
+        aspect_ratio = (b_ref_ft ** 2 / S_ref_ft2) if S_ref_ft2 > 0 else 0
+
         return f"""
             <div class="card">
                 <h3>Reference Geometry</h3>
                 <table>
                     <tr><th>Parameter</th><th>Value</th><th>Units</th></tr>
-                    <tr><td>Wing Area (S<sub>ref</sub>)</td><td>{reference.get('wing_area_ft2', 0):.3f}</td><td>ft²</td></tr>
-                    <tr><td>Wingspan (b<sub>ref</sub>)</td><td>{reference.get('wingspan_ft', 0):.3f}</td><td>ft</td></tr>
-                    <tr><td>Mean Chord (c<sub>ref</sub>)</td><td>{reference.get('mean_chord_ft', 0):.3f}</td><td>ft</td></tr>
-                    <tr><td>Aspect Ratio</td><td>{reference.get('aspect_ratio', 0):.3f}</td><td>-</td></tr>
+                    <tr><td>Wing Area (S<sub>ref</sub>)</td><td>{S_ref_ft2:.3f}</td><td>ft²</td></tr>
+                    <tr><td>Wingspan (b<sub>ref</sub>)</td><td>{b_ref_ft:.3f}</td><td>ft</td></tr>
+                    <tr><td>Mean Chord (c<sub>ref</sub>)</td><td>{c_ref_ft:.3f}</td><td>ft</td></tr>
+                    <tr><td>Aspect Ratio</td><td>{aspect_ratio:.3f}</td><td>-</td></tr>
                 </table>
             </div>
 
@@ -373,15 +394,22 @@ class HTMLViewer:
                     <tr><td>CG x</td><td>{cg[0]:.3f}</td><td>ft</td></tr>
                     <tr><td>CG y</td><td>{cg[1]:.3f}</td><td>ft</td></tr>
                     <tr><td>CG z</td><td>{cg[2]:.3f}</td><td>ft</td></tr>
-                    <tr><td>I<sub>xx</sub></td><td>{mass.get('Ixx_lbm_ft2', 0):.2f}</td><td>lbm·ft²</td></tr>
-                    <tr><td>I<sub>yy</sub></td><td>{mass.get('Iyy_lbm_ft2', 0):.2f}</td><td>lbm·ft²</td></tr>
-                    <tr><td>I<sub>zz</sub></td><td>{mass.get('Izz_lbm_ft2', 0):.2f}</td><td>lbm·ft²</td></tr>
+                    <tr><td>I<sub>xx</sub></td><td>{inertia.get('Ixx', 0):.2f}</td><td>lbm·ft²</td></tr>
+                    <tr><td>I<sub>yy</sub></td><td>{inertia.get('Iyy', 0):.2f}</td><td>lbm·ft²</td></tr>
+                    <tr><td>I<sub>zz</sub></td><td>{inertia.get('Izz', 0):.2f}</td><td>lbm·ft²</td></tr>
                 </table>
             </div>
         """
 
     def _build_stability_tab(self, static: Dict, dynamic: Dict) -> str:
         """Build stability tab content."""
+        # Extract nested structure
+        longitudinal = static.get('longitudinal', {})
+        lateral_directional = static.get('lateral_directional', {})
+        pitch_rate = dynamic.get('pitch_rate', {})
+        roll_rate = dynamic.get('roll_rate', {})
+        yaw_rate = dynamic.get('yaw_rate', {})
+
         return f"""
             <div class="card">
                 <h3>Static Stability Derivatives</h3>
@@ -390,10 +418,10 @@ class HTMLViewer:
                 </div>
                 <table>
                     <tr><th>Derivative</th><th>Value</th><th>Units</th><th>Description</th></tr>
-                    <tr><td>CL<sub>α</sub></td><td>{static.get('CL_alpha_per_rad', 0):.3f}</td><td>/rad</td><td>Lift curve slope</td></tr>
-                    <tr><td>Cm<sub>α</sub></td><td>{static.get('Cm_alpha_per_rad', 0):.3f}</td><td>/rad</td><td>Pitch stability</td></tr>
-                    <tr><td>Cn<sub>β</sub></td><td>{static.get('Cn_beta_per_rad', 0):.3f}</td><td>/rad</td><td>Yaw stability</td></tr>
-                    <tr><td>Cl<sub>β</sub></td><td>{static.get('Cl_beta_per_rad', 0):.3f}</td><td>/rad</td><td>Dihedral effect</td></tr>
+                    <tr><td>CL<sub>α</sub></td><td>{longitudinal.get('CL_alpha_per_rad', 0):.3f}</td><td>/rad</td><td>Lift curve slope</td></tr>
+                    <tr><td>Cm<sub>α</sub></td><td>{longitudinal.get('Cm_alpha_per_rad', 0):.3f}</td><td>/rad</td><td>Pitch stability</td></tr>
+                    <tr><td>Cn<sub>β</sub></td><td>{lateral_directional.get('Cn_beta_per_rad', 0):.3f}</td><td>/rad</td><td>Yaw stability</td></tr>
+                    <tr><td>Cl<sub>β</sub></td><td>{lateral_directional.get('Cl_beta_per_rad', 0):.3f}</td><td>/rad</td><td>Dihedral effect</td></tr>
                 </table>
             </div>
 
@@ -404,18 +432,45 @@ class HTMLViewer:
                 </div>
                 <table>
                     <tr><th>Derivative</th><th>Value</th><th>Units</th><th>Description</th></tr>
-                    <tr><td>CL<sub>q</sub></td><td>{dynamic.get('CL_q_per_rad', 0):.3f}</td><td>/rad</td><td>Pitch damping (lift)</td></tr>
-                    <tr><td>Cm<sub>q</sub></td><td>{dynamic.get('Cm_q_per_rad', 0):.3f}</td><td>/rad</td><td>Pitch damping (moment)</td></tr>
-                    <tr><td>Cl<sub>p</sub></td><td>{dynamic.get('Cl_p_per_rad', 0):.3f}</td><td>/rad</td><td>Roll damping</td></tr>
-                    <tr><td>Cn<sub>r</sub></td><td>{dynamic.get('Cn_r_per_rad', 0):.3f}</td><td>/rad</td><td>Yaw damping</td></tr>
+                    <tr><td>CL<sub>q</sub></td><td>{pitch_rate.get('CL_q_per_rad', 0):.3f}</td><td>/rad</td><td>Pitch damping (lift)</td></tr>
+                    <tr><td>Cm<sub>q</sub></td><td>{pitch_rate.get('Cm_q_per_rad', 0):.3f}</td><td>/rad</td><td>Pitch damping (moment)</td></tr>
+                    <tr><td>Cl<sub>p</sub></td><td>{roll_rate.get('Cl_p_per_rad', 0):.3f}</td><td>/rad</td><td>Roll damping</td></tr>
+                    <tr><td>Cn<sub>r</sub></td><td>{yaw_rate.get('Cn_r_per_rad', 0):.3f}</td><td>/rad</td><td>Yaw damping</td></tr>
                 </table>
             </div>
         """
 
-    def _build_control_tab(self, control: Dict) -> str:
+    def _build_control_tab(self, aero: Dict) -> str:
         """Build control effectiveness tab content."""
-        elevon = control.get('elevon', {})
-        aileron = control.get('aileron', {})
+        # Extract control surfaces from array
+        control_surfaces = aero.get('control_surfaces', [])
+
+        # Find elevon and aileron controls
+        elevon_control = None
+        aileron_control = None
+        for cs in control_surfaces:
+            if cs.get('name') == 'Elevon':
+                elevon_control = cs
+            elif cs.get('name') == 'Aileron':
+                aileron_control = cs
+
+        # Get elevon effectiveness (convert from per-radian to per-degree)
+        if elevon_control:
+            elevon_eff = elevon_control.get('effectiveness', {})
+            CL_de_per_deg = elevon_eff.get('CL_delta_per_rad', 0) * 180 / np.pi
+            Cm_de_per_deg = elevon_eff.get('Cm_delta_per_rad', 0) * 180 / np.pi
+        else:
+            CL_de_per_deg = 0
+            Cm_de_per_deg = 0
+
+        # Get aileron effectiveness (convert from per-radian to per-degree)
+        if aileron_control:
+            aileron_eff = aileron_control.get('effectiveness', {})
+            Cl_da_per_deg = aileron_eff.get('Cl_delta_per_rad', 0) * 180 / np.pi
+            Cn_da_per_deg = aileron_eff.get('Cn_delta_per_rad', 0) * 180 / np.pi
+        else:
+            Cl_da_per_deg = 0
+            Cn_da_per_deg = 0
 
         return f"""
             <div class="card">
@@ -425,8 +480,8 @@ class HTMLViewer:
                 </div>
                 <table>
                     <tr><th>Derivative</th><th>Value</th><th>Units</th><th>Description</th></tr>
-                    <tr><td>CL<sub>δe</sub></td><td>{elevon.get('CL_de_per_deg', 0):.4f}</td><td>/deg</td><td>Lift per elevon deflection</td></tr>
-                    <tr><td>Cm<sub>δe</sub></td><td>{elevon.get('Cm_de_per_deg', 0):.4f}</td><td>/deg</td><td>Pitch per elevon deflection</td></tr>
+                    <tr><td>CL<sub>δe</sub></td><td>{CL_de_per_deg:.4f}</td><td>/deg</td><td>Lift per elevon deflection</td></tr>
+                    <tr><td>Cm<sub>δe</sub></td><td>{Cm_de_per_deg:.4f}</td><td>/deg</td><td>Pitch per elevon deflection</td></tr>
                 </table>
             </div>
 
@@ -437,8 +492,8 @@ class HTMLViewer:
                 </div>
                 <table>
                     <tr><th>Derivative</th><th>Value</th><th>Units</th><th>Description</th></tr>
-                    <tr><td>Cl<sub>δa</sub></td><td>{aileron.get('Cl_da_per_deg', 0):.4f}</td><td>/deg</td><td>Roll per aileron deflection</td></tr>
-                    <tr><td>Cn<sub>δa</sub></td><td>{aileron.get('Cn_da_per_deg', 0):.4f}</td><td>/deg</td><td>Adverse yaw</td></tr>
+                    <tr><td>Cl<sub>δa</sub></td><td>{Cl_da_per_deg:.4f}</td><td>/deg</td><td>Roll per aileron deflection</td></tr>
+                    <tr><td>Cn<sub>δa</sub></td><td>{Cn_da_per_deg:.4f}</td><td>/deg</td><td>Adverse yaw</td></tr>
                 </table>
             </div>
         """
@@ -463,16 +518,46 @@ class HTMLViewer:
 
     def _build_plot_scripts(self) -> str:
         """Build Plotly.js plotting scripts."""
-        static = self.data.get('static_stability', {})
-        dynamic = self.data.get('dynamic_stability', {})
-        control = self.data.get('control_effectiveness', {})
+        # Extract nested structure
+        aero = self.data.get('aerodynamics', {})
+        static_stab = aero.get('static_stability', {})
+        dynamic_stab = aero.get('dynamic_stability', {})
+
+        longitudinal = static_stab.get('longitudinal', {})
+        lateral_directional = static_stab.get('lateral_directional', {})
+        pitch_rate = dynamic_stab.get('pitch_rate', {})
+        roll_rate = dynamic_stab.get('roll_rate', {})
+        yaw_rate = dynamic_stab.get('yaw_rate', {})
+
+        # Extract control surfaces
+        control_surfaces = aero.get('control_surfaces', [])
+        elevon_control = None
+        aileron_control = None
+        for cs in control_surfaces:
+            if cs.get('name') == 'Elevon':
+                elevon_control = cs
+            elif cs.get('name') == 'Aileron':
+                aileron_control = cs
+
+        # Get control effectiveness (convert from per-radian to per-degree)
+        if elevon_control:
+            elevon_eff = elevon_control.get('effectiveness', {})
+            Cm_de_per_deg = elevon_eff.get('Cm_delta_per_rad', 0) * 180 / np.pi
+        else:
+            Cm_de_per_deg = 0
+
+        if aileron_control:
+            aileron_eff = aileron_control.get('effectiveness', {})
+            Cl_da_per_deg = aileron_eff.get('Cl_delta_per_rad', 0) * 180 / np.pi
+        else:
+            Cl_da_per_deg = 0
 
         return f"""
         // Static derivatives bar chart
         const staticData = [{{
             x: ['CL_α', 'Cm_α', 'Cn_β', 'Cl_β'],
-            y: [{static.get('CL_alpha_per_rad', 0)}, {static.get('Cm_alpha_per_rad', 0)},
-                {static.get('Cn_beta_per_rad', 0)}, {static.get('Cl_beta_per_rad', 0)}],
+            y: [{longitudinal.get('CL_alpha_per_rad', 0)}, {longitudinal.get('Cm_alpha_per_rad', 0)},
+                {lateral_directional.get('Cn_beta_per_rad', 0)}, {lateral_directional.get('Cl_beta_per_rad', 0)}],
             type: 'bar',
             marker: {{ color: ['#667eea', '#764ba2', '#f093fb', '#f5576c'] }}
         }}];
@@ -489,8 +574,8 @@ class HTMLViewer:
         // Dynamic derivatives bar chart
         const dynamicData = [{{
             x: ['CL_q', 'Cm_q', 'Cl_p', 'Cn_r'],
-            y: [{dynamic.get('CL_q_per_rad', 0)}, {dynamic.get('Cm_q_per_rad', 0)},
-                {dynamic.get('Cl_p_per_rad', 0)}, {dynamic.get('Cn_r_per_rad', 0)}],
+            y: [{pitch_rate.get('CL_q_per_rad', 0)}, {pitch_rate.get('Cm_q_per_rad', 0)},
+                {roll_rate.get('Cl_p_per_rad', 0)}, {yaw_rate.get('Cn_r_per_rad', 0)}],
             type: 'bar',
             marker: {{ color: ['#667eea', '#764ba2', '#f093fb', '#f5576c'] }}
         }}];
@@ -507,7 +592,7 @@ class HTMLViewer:
         // Elevon effectiveness
         const elevonData = [{{
             x: [-30, -20, -10, 0, 10, 20, 30],
-            y: [-30, -20, -10, 0, 10, 20, 30].map(d => d * {control.get('elevon', {}).get('Cm_de_per_deg', 0)}),
+            y: [-30, -20, -10, 0, 10, 20, 30].map(d => d * {Cm_de_per_deg}),
             type: 'scatter',
             mode: 'lines+markers',
             name: 'Cm',
@@ -526,7 +611,7 @@ class HTMLViewer:
         // Aileron effectiveness
         const aileronData = [{{
             x: [-30, -20, -10, 0, 10, 20, 30],
-            y: [-30, -20, -10, 0, 10, 20, 30].map(d => d * {control.get('aileron', {}).get('Cl_da_per_deg', 0)}),
+            y: [-30, -20, -10, 0, 10, 20, 30].map(d => d * {Cl_da_per_deg}),
             type: 'scatter',
             mode: 'lines+markers',
             name: 'Cl',
