@@ -287,6 +287,22 @@ class HTMLViewer:
             padding: 10px;
         }}
 
+        .full-width-card {{
+            width: 100%;
+            margin-bottom: 15px;
+        }}
+
+        .full-width-card .plot-container {{
+            min-height: 350px;
+            width: 100%;
+        }}
+
+        .range-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }}
+
         table {{
             width: 100%;
             border-collapse: collapse;
@@ -341,6 +357,7 @@ class HTMLViewer:
                 <button class="tab" onclick="showTab('modes')">Dynamic Modes</button>
                 <button class="tab" onclick="showTab('control')">Control</button>
                 <button class="tab" onclick="showTab('polars')">Polars</button>
+                <button class="tab" onclick="showTab('range')">Range</button>
             </div>
 
             <div id="overview" class="tab-content active">
@@ -365,6 +382,10 @@ class HTMLViewer:
 
             <div id="polars" class="tab-content">
                 {self._build_polars_tab()}
+            </div>
+
+            <div id="range" class="tab-content">
+                {self._build_range_tab(mass)}
             </div>
         </div>
 
@@ -475,17 +496,41 @@ class HTMLViewer:
         longitudinal = static_stab.get('longitudinal', {})
         neutral_point_x_ft = longitudinal.get('neutral_point_x_ft', None)
 
-        # Load LE, TE, winglet, and elevon points from CSV files
+        # Calculate static margin: SM = (x_np - x_cg) / c_ref
+        static_margin_pct = None
+        is_stable = False
+        stability_text = ""
+        np_row_color = "#ffffff"
+        if neutral_point_x_ft is not None and c_ref_ft > 0:
+            static_margin_pct = ((neutral_point_x_ft - cg[0]) / c_ref_ft) * 100
+            # Stability assessment: positive SM = stable, negative = unstable
+            # Typical range: 5-15% is good, 0-5% marginal, <0% unstable
+            if static_margin_pct > 5:
+                is_stable = True
+                stability_text = "✓ STABLE"
+                np_row_color = "#c8e6c9"  # Green
+            elif static_margin_pct > 0:
+                is_stable = True
+                stability_text = "⚠ MARGINALLY STABLE"
+                np_row_color = "#fff3cd"  # Yellow
+            else:
+                is_stable = False
+                stability_text = "✗ UNSTABLE"
+                np_row_color = "#ffcdd2"  # Red
+
+        # Load LE, TE, winglet, elevon, and tail points from CSV files
         le_points = []
         te_points = []
         winglet_points = []
         elevon_points = []
+        tail_points = []
 
         try:
             le_path = os.path.join('data', 'LEpts.csv')
             te_path = os.path.join('data', 'TEpts.csv')
             winglet_path = os.path.join('data', 'WINGLETpts.csv')
             elevon_path = os.path.join('data', 'ELEVONpts.csv')
+            tail_path = os.path.join('data', 'TAILpts.csv')
 
             with open(le_path, 'r') as f:
                 reader = csv.DictReader(f)
@@ -499,19 +544,26 @@ class HTMLViewer:
                     # Convert inches to feet
                     te_points.append([float(row['x'])/12, float(row['y'])/12, float(row['z'])/12])
 
-            # Load winglets if available
+            # Load winglets if available (optional)
             if os.path.exists(winglet_path):
                 with open(winglet_path, 'r') as f:
                     reader = csv.DictReader(f)
                     for row in reader:
                         winglet_points.append([float(row['x'])/12, float(row['y'])/12, float(row['z'])/12])
 
-            # Load elevons if available
+            # Load elevons if available (optional)
             if os.path.exists(elevon_path):
                 with open(elevon_path, 'r') as f:
                     reader = csv.DictReader(f)
                     for row in reader:
                         elevon_points.append([float(row['x'])/12, float(row['y'])/12, float(row['z'])/12])
+
+            # Load tail if available (optional)
+            if os.path.exists(tail_path):
+                with open(tail_path, 'r') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        tail_points.append([float(row['x'])/12, float(row['y'])/12, float(row['z'])/12])
 
         except Exception as e:
             # Fall back to simplified geometry if files not found
@@ -519,6 +571,7 @@ class HTMLViewer:
             te_points = []
             winglet_points = []
             elevon_points = []
+            tail_points = []
 
         # Create planform SVG with actual geometry
         # Scale factor to fit in viewport - matching PDF size
@@ -526,7 +579,7 @@ class HTMLViewer:
 
         if le_points and te_points:
             # Find bounds for proper scaling - include all geometry components
-            all_points = le_points + te_points + winglet_points + elevon_points
+            all_points = le_points + te_points + winglet_points + elevon_points + tail_points
             all_x = [p[0] for p in all_points]
             all_y = [p[1] for p in all_points]
             min_x, max_x = min(all_x), max(all_x)
@@ -539,6 +592,9 @@ class HTMLViewer:
             # Calculate SVG dimensions with padding
             chordwise_extent = max_x - min_x
             spanwise_extent = max_y * 2  # *2 for both wing halves (mirrored around y=0)
+
+            # Use actual wingspan from geometry data (more accurate than b_ref_ft)
+            actual_wingspan_ft = spanwise_extent
 
             svg_width = int(spanwise_extent * scale) + 200
             svg_height = int(chordwise_extent * scale) + 200
@@ -582,6 +638,28 @@ class HTMLViewer:
 
             # CG marker position
             cg_x, cg_y = to_svg(cg[0], cg[1])
+
+            # Neutral point marker position (if available)
+            np_svg = ""
+            static_margin_svg = ""
+            if neutral_point_x_ft is not None:
+                np_x, np_y = to_svg(neutral_point_x_ft, 0)  # On centerline
+
+                # Static margin visualization (line from CG to NP)
+                static_margin_svg = f"""
+                        <!-- Static margin indicator -->
+                        <line x1="{cg_x}" y1="{cg_y}" x2="{np_x}" y2="{np_y}"
+                              stroke="#0000ff" stroke-width="2" stroke-dasharray="5,3"/>
+                        <text x="{(cg_x + np_x) / 2}" y="{(cg_y + np_y) / 2 - 10}"
+                              fill="#0000ff" font-family="Courier New" font-size="11" text-anchor="middle" font-weight="bold">
+                              SM = {((neutral_point_x_ft - cg[0]) / c_ref_ft * 100):.1f}%</text>
+"""
+
+                np_svg = f"""
+                        <!-- Neutral point marker -->
+                        <circle cx="{np_x}" cy="{np_y}" r="6" fill="#0000ff" stroke="#000000" stroke-width="1"/>
+                        <text x="{np_x + 12}" y="{np_y + 5}" fill="#000000" font-family="Courier New" font-size="13" font-weight="bold">NP</text>
+"""
 
             # Build winglet polygons if available
             winglet_svg = ""
@@ -633,6 +711,47 @@ class HTMLViewer:
                                  fill="#ffcccc" fill-opacity="0.5" stroke="#cc0000" stroke-width="1.5"/>
 """
 
+            # Build tail polygon if available
+            tail_svg = ""
+            if tail_points:
+                # Tail is typically a single surface (vertical stabilizer on centerline)
+                # or horizontal stabilizer - render it as a polygon
+                tail_polygon_points = []
+                for pt in tail_points:
+                    sx, sy = to_svg(pt[0], pt[1])
+                    tail_polygon_points.append(f"{sx:.1f},{sy:.1f}")
+                tail_polygon = " ".join(tail_polygon_points)
+
+                # Check if tail is symmetric (has y values on both sides) or single surface
+                tail_y_values = [p[1] for p in tail_points]
+                has_negative_y = any(y < -0.01 for y in tail_y_values)
+                has_positive_y = any(y > 0.01 for y in tail_y_values)
+
+                if has_negative_y and has_positive_y:
+                    # Tail spans both sides - just draw it as-is
+                    tail_svg = f"""
+                        <!-- Tail surface -->
+                        <polygon points="{tail_polygon}"
+                                 fill="#d4edda" fill-opacity="0.6" stroke="#006400" stroke-width="1.5"/>
+"""
+                else:
+                    # Single-sided tail - mirror it for symmetric planform
+                    left_tail_points = []
+                    for pt in tail_points:
+                        sx, sy = to_svg(pt[0], -pt[1])
+                        left_tail_points.append(f"{sx:.1f},{sy:.1f}")
+                    left_tail_polygon = " ".join(left_tail_points)
+
+                    tail_svg = f"""
+                        <!-- Right tail surface -->
+                        <polygon points="{tail_polygon}"
+                                 fill="#d4edda" fill-opacity="0.6" stroke="#006400" stroke-width="1.5"/>
+
+                        <!-- Left tail surface -->
+                        <polygon points="{left_tail_polygon}"
+                                 fill="#d4edda" fill-opacity="0.6" stroke="#006400" stroke-width="1.5"/>
+"""
+
             planform_svg = f"""
                         <!-- Right wing -->
                         <polygon points="{right_polygon}"
@@ -644,19 +763,24 @@ class HTMLViewer:
 
 {winglet_svg}
 {elevon_svg}
+{tail_svg}
 
                         <!-- Centerline -->
                         <line x1="{center_x}" y1="50" x2="{center_x}" y2="{svg_height-50}"
                               stroke="#666666" stroke-width="1" stroke-dasharray="3,3"/>
 
+{static_margin_svg}
+
                         <!-- CG marker -->
                         <circle cx="{cg_x}" cy="{cg_y}" r="6" fill="#ff0000" stroke="#000000" stroke-width="1"/>
                         <text x="{cg_x + 12}" y="{cg_y + 5}" fill="#000000" font-family="Courier New" font-size="13" font-weight="bold">CG</text>
 
+{np_svg}
+
                         <!-- Dimension labels -->
                         <text x="{center_x}" y="{svg_height - 30}"
                               fill="#666666" font-family="Courier New" font-size="12" text-anchor="middle" font-weight="bold">
-                              Wingspan: {b_ref_ft:.2f} ft</text>
+                              Wingspan: {actual_wingspan_ft:.2f} ft</text>
 
                         <!-- Axes labels -->
                         <text x="{svg_width - 60}" y="{center_y - 15}" fill="#666666" font-family="Courier New" font-size="11">+Y (span)</text>
@@ -673,6 +797,29 @@ class HTMLViewer:
             cg_x = center_x
             cg_y = center_y
 
+            # Neutral point and static margin for fallback
+            np_svg_fallback = ""
+            static_margin_svg_fallback = ""
+            if neutral_point_x_ft is not None:
+                # Simplified conversion for fallback geometry
+                np_x_fallback = center_x + ((neutral_point_x_ft - x_ref_ft) * scale)
+                np_y_fallback = center_y
+
+                static_margin_svg_fallback = f"""
+                        <!-- Static margin indicator -->
+                        <line x1="{cg_x}" y1="{cg_y}" x2="{np_x_fallback}" y2="{np_y_fallback}"
+                              stroke="#0000ff" stroke-width="2" stroke-dasharray="5,3"/>
+                        <text x="{(cg_x + np_x_fallback) / 2}" y="{(cg_y + np_y_fallback) / 2 - 10}"
+                              fill="#0000ff" font-family="Courier New" font-size="11" text-anchor="middle" font-weight="bold">
+                              SM = {((neutral_point_x_ft - cg[0]) / c_ref_ft * 100):.1f}%</text>
+"""
+
+                np_svg_fallback = f"""
+                        <!-- Neutral point marker -->
+                        <circle cx="{np_x_fallback}" cy="{np_y_fallback}" r="6" fill="#0000ff" stroke="#000000" stroke-width="1"/>
+                        <text x="{np_x_fallback + 12}" y="{np_y_fallback + 5}" fill="#000000" font-family="Courier New" font-size="13" font-weight="bold">NP</text>
+"""
+
             planform_svg = f"""
                         <!-- Wing planform (simplified fallback) -->
                         <rect x="{center_x - wing_half_span}" y="{center_y - wing_chord/2}"
@@ -684,9 +831,13 @@ class HTMLViewer:
                               x2="{center_x}" y2="{center_y + wing_chord/2}"
                               stroke="#666666" stroke-width="1"/>
 
+{static_margin_svg_fallback}
+
                         <!-- CG marker -->
                         <circle cx="{cg_x}" cy="{cg_y}" r="5" fill="#ff0000"/>
                         <text x="{cg_x + 10}" y="{cg_y + 5}" fill="#000000" font-family="Courier New" font-size="12">CG</text>
+
+{np_svg_fallback}
 
                         <!-- Dimension labels -->
                         <text x="{center_x}" y="{center_y + wing_chord/2 + 35}"
@@ -722,7 +873,8 @@ class HTMLViewer:
                     <tr><td>Wingspan (b<sub>ref</sub>)</td><td>{b_ref_ft:.3f}</td><td>ft</td></tr>
                     <tr><td>Mean Chord (c<sub>ref</sub>)</td><td>{c_ref_ft:.3f}</td><td>ft</td></tr>
                     <tr><td>Aspect Ratio</td><td>{aspect_ratio:.3f}</td><td>-</td></tr>
-                    {'<tr><td>Neutral Point (x<sub>np</sub>)</td><td>{:.3f}</td><td>ft</td></tr>'.format(neutral_point_x_ft) if neutral_point_x_ft is not None else ''}
+                    {'<tr style="background: {};"><td><b>Neutral Point (x<sub>np</sub>)</b></td><td><b>{:.3f}</b></td><td><b>ft</b></td></tr>'.format(np_row_color, neutral_point_x_ft) if neutral_point_x_ft is not None else ''}
+                    {'<tr style="background: {};"><td><b>Static Margin</b></td><td><b>{:.2f}</b></td><td><b>% - {}</b></td></tr>'.format(np_row_color, static_margin_pct, stability_text) if static_margin_pct is not None else ''}
                 </table>
             </div>
 
@@ -930,6 +1082,81 @@ class HTMLViewer:
             </div>
         """
 
+    def _build_range_tab(self, mass: Dict) -> str:
+        """Build range analysis tab content."""
+        fuel_mass = mass.get('fuel_mass_lbm', None)
+        total_mass = mass.get('mass_lbm', 0)
+
+        # If no fuel mass, show message
+        if fuel_mass is None:
+            return """
+            <div class="card">
+                <h3>Range Analysis</h3>
+                <p style="color: #666; background: #f9f9f9; padding: 15px; border-left: 3px solid #cc0000;">
+                    <b>No fuel data available.</b><br><br>
+                    To enable range calculations, add a <code>fuel_mass</code> column to your mass.csv file.
+                    The fuel_mass value should be in pounds (lbm).
+                </p>
+            </div>
+            """
+
+        # Calculate fuel fraction
+        fuel_fraction = fuel_mass / total_mass if total_mass > 0 else 0
+
+        return f"""
+            <div class="card" style="width: 100%; margin-bottom: 15px;">
+                <h3>Mission Profile</h3>
+                <div style="height: 350px; width: 100%;">
+                    <div id="mission-profile-plot" style="width: 100%; height: 100%;"></div>
+                </div>
+            </div>
+
+            <div class="range-grid">
+                <div class="card">
+                    <h3>Fuel & Weight Summary</h3>
+                    <div class="grid">
+                        <div class="metric">
+                            <div class="metric-label">Total Mass (MTOW)</div>
+                            <div class="metric-value">{total_mass:.1f}<span class="metric-unit">lbm</span></div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Fuel Mass</div>
+                            <div class="metric-value">{fuel_mass:.1f}<span class="metric-unit">lbm</span></div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Fuel Fraction</div>
+                            <div class="metric-value">{fuel_fraction*100:.1f}<span class="metric-unit">%</span></div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Empty Weight (est)</div>
+                            <div class="metric-value">{total_mass - fuel_mass:.1f}<span class="metric-unit">lbm</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Range Calculator (Breguet Equation)</h3>
+                    <p style="color: #666; background: #f9f9f9; padding: 10px; border-left: 3px solid #666; margin-bottom: 15px; font-size: 0.9em;">
+                        <b>Breguet Range Equation:</b> R = (V / SFC) × (L/D) × ln(W₁/W₂)<br>
+                        where W₁ = initial weight, W₂ = final weight (after fuel burn)
+                    </p>
+                    <div id="range-calculator"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Range vs L/D</h3>
+                    <div class="plot-container">
+                        <div id="range-ld-plot"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Endurance Analysis</h3>
+                    <div id="endurance-calculator"></div>
+                </div>
+            </div>
+        """
+
     def _build_plot_scripts(self) -> str:
         """Build Plotly.js plotting scripts."""
         # Load AVL 3D aircraft polar data
@@ -961,17 +1188,21 @@ class HTMLViewer:
             elevon_eff = elevon_control.get('effectiveness', {})
             CL_de_per_deg = elevon_eff.get('CL_delta_per_rad', 0) * 180 / np.pi
             Cm_de_per_deg = elevon_eff.get('Cm_delta_per_rad', 0) * 180 / np.pi
+            Ch_elevon = elevon_eff.get('Ch_delta')  # Hinge moment coefficient from AVL
         else:
             CL_de_per_deg = 0
             Cm_de_per_deg = 0
+            Ch_elevon = None
 
         if aileron_control:
             aileron_eff = aileron_control.get('effectiveness', {})
             Cl_da_per_deg = aileron_eff.get('Cl_delta_per_rad', 0) * 180 / np.pi
             Cn_da_per_deg = aileron_eff.get('Cn_delta_per_rad', 0) * 180 / np.pi
+            Ch_aileron = aileron_eff.get('Ch_delta')  # Hinge moment coefficient from AVL
         else:
             Cl_da_per_deg = 0
             Cn_da_per_deg = 0
+            Ch_aileron = None
 
         # Extract airfoil polar data
         polars_data = self.data.get('airfoil_polars', {})
@@ -1250,8 +1481,10 @@ class HTMLViewer:
 
         // Elevon forces and hinge loading at 10° deflection
         const delta_e_test = 10.0;  // degrees
-        const V_mph = 150.0;
-        const V_test_fps = V_mph / 0.681818;
+        const Mach_test = 0.5;
+        const a_fps = 1116.45;  // Speed of sound at sea level (ft/s)
+        const V_test_fps = Mach_test * a_fps;  // Mach 0.5 = 558.2 ft/s
+        const V_mph = V_test_fps * 0.681818;  // Convert to mph for display
         const rho_slugft3 = 0.002377;
         const q_lbft2 = 0.5 * rho_slugft3 * V_test_fps * V_test_fps;
         const q_lbin2 = q_lbft2 / 144;
@@ -1273,19 +1506,59 @@ class HTMLViewer:
         const L_per_lb = L_total_lb / aircraft_weight_lb;
         const D_per_lb = D_total_lb / aircraft_weight_lb;
 
-        const moment_arm_ft = 7.0;
-        const elevon_normal_force_lb = Math.abs(M_total_lbft) / moment_arm_ft;
-        const c_elevon_ft = 0.718;
-        const hinge_moment_lbft = elevon_normal_force_lb * c_elevon_ft * 0.25;
-        const hinge_moment_lbin = hinge_moment_lbft * 12;
+        // Hinge moment calculation using AVL Ch coefficient
+        // HM = q * S_ref * c_ref * Ch (dimensional hinge moment)
+        const Ch_elevon = {Ch_elevon if Ch_elevon is not None else 'null'};
+        let hinge_moment_lbin = 0;
+        let hinge_method = "N/A";
+
+        if (Ch_elevon !== null) {{
+            // Use actual AVL hinge moment coefficient
+            // Ch is nondimensional: HM / (q * S * c)
+            const hinge_moment_lbft = Ch_elevon * q_lbft2 * ref.S_ref_ft2 * ref.c_ref_ft;
+            hinge_moment_lbin = Math.abs(hinge_moment_lbft * 12);
+            hinge_method = "AVL Ch";
+        }} else {{
+            // Fallback to estimated method (legacy)
+            const moment_arm_ft = 7.0;
+            const elevon_normal_force_lb = Math.abs(M_total_lbft) / moment_arm_ft;
+            const c_elevon_ft = 0.718;
+            hinge_moment_lbin = elevon_normal_force_lb * c_elevon_ft * 0.25 * 12;
+            hinge_method = "Estimated";
+        }}
+
+        // Servo/actuator load calculations
+        // Calculate force required for different servo arm lengths
+        const servo_arms_in = [0.5, 0.75, 1.0, 1.5, 2.0, 3.0];  // inches
+        const servo_forces_lb = servo_arms_in.map(arm => hinge_moment_lbin / arm);
+
+        // Also calculate for linear actuator strokes (perpendicular force)
+        const actuator_strokes_in = [1.0, 2.0, 3.0, 4.0];  // inches
+        // For a linear actuator, effective arm ≈ stroke/2 at mid-travel for ±30° rotation
+        const actuator_forces_lb = actuator_strokes_in.map(stroke => {{
+            const effective_arm = stroke * 0.5;  // Approximate effective moment arm
+            return hinge_moment_lbin / effective_arm;
+        }});
+
+        // Calculate hinge moment at different speeds for sizing chart
+        const speeds_mph = [100, 150, 200, 250, 300, 350, 400];
+        const hinge_moments_vs_speed = speeds_mph.map(v_mph => {{
+            const v_fps = v_mph * 1.467;
+            const q_local = 0.5 * rho_slugft3 * v_fps * v_fps;
+            if (Ch_elevon !== null) {{
+                return Math.abs(Ch_elevon * q_local * ref.S_ref_ft2 * ref.c_ref_ft * 12);
+            }} else {{
+                return 0;
+            }}
+        }});
 
         const elevonForcesHTML = `
             <div style="font-family: 'Courier New', monospace; font-size: 10px;">
                 <h4 style="margin-top: 10px; margin-bottom: 10px;">Flight Condition</h4>
                 <table style="width: 45%; border-collapse: collapse; float: left; margin-right: 5%;">
                     <tr style="background: #40466e; color: white;"><th style="padding: 5px; border: 1px solid #ccc; text-align: left;">Parameter</th><th style="padding: 5px; border: 1px solid #ccc;">Value</th><th style="padding: 5px; border: 1px solid #ccc;">Units</th></tr>
-                    <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Mach Number</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{(V_test_fps/1116.45).toFixed(2)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">-</td></tr>
-                    <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Velocity</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{V_mph.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">mph</td></tr>
+                    <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Mach Number</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{Mach_test.toFixed(2)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">-</td></tr>
+                    <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Velocity</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{V_test_fps.toFixed(1)}} ft/s (${{V_mph.toFixed(1)}} mph)</td><td style="padding: 5px; border: 1px solid #e0e0e0;">-</td></tr>
                     <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Dynamic Pressure</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{q_lbin2.toFixed(4)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">lb/in²</td></tr>
                     <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Density</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{rho_slugft3.toFixed(6)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">slug/ft³</td></tr>
                     <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Elevon Deflection</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{delta_e_test.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">deg</td></tr>
@@ -1316,23 +1589,100 @@ class HTMLViewer:
                     <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Cm_de</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{({Cm_de_per_deg}).toFixed(5)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">/deg</td></tr>
                 </table>
 
-                <h4 style="margin-top: 20px; margin-bottom: 10px; margin-left: 50%;">Elevon Hinge Loading (Estimated)</h4>
+                <h4 style="margin-top: 20px; margin-bottom: 10px; margin-left: 50%;">Elevon Hinge Loading (${{hinge_method}})</h4>
                 <table style="width: 45%; border-collapse: collapse; float: left;">
                     <tr style="background: #40466e; color: white;"><th style="padding: 5px; border: 1px solid #ccc; text-align: left;">Parameter</th><th style="padding: 5px; border: 1px solid #ccc;">Value</th><th style="padding: 5px; border: 1px solid #ccc;">Units</th></tr>
-                    <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Normal Force</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{elevon_normal_force_lb.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">lb</td></tr>
-                    <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Hinge Moment</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{hinge_moment_lbin.toFixed(0)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">lb-in</td></tr>
-                    <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Elevon Chord</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{(c_elevon_ft*12).toFixed(2)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">in</td></tr>
+                    <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Ch (hinge coeff)</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{Ch_elevon !== null ? Ch_elevon.toExponential(4) : 'N/A'}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">-</td></tr>
+                    <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Hinge Moment</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{hinge_moment_lbin.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">lb-in</td></tr>
+                    <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Hinge Moment (N-m)</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{(hinge_moment_lbin * 0.113).toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">N-m</td></tr>
                 </table>
 
                 <div style="clear: both;"></div>
 
-                <p style="margin-top: 20px; font-size: 9px; font-style: italic;">
-                    <b>Notes:</b><br>
-                    • Forces calculated at sea level (ρ = 0.002377 slug/ft³), V = ${{V_mph}} mph (M = ${{(V_test_fps/1116.45).toFixed(2)}})<br>
-                    • Force per pound represents fraction of aircraft weight<br>
-                    • Hinge loading is estimated using simplified geometry<br>
-                    • Normal force = |Pitch Moment| / moment arm (r) / ft)<br>
-                    • Hinge moment = Normal force × elevon chord × 0.25 (hinge at 75% chord)
+                <h4 style="margin-top: 20px; margin-bottom: 10px;">Servo/Actuator Sizing (at ${{V_mph.toFixed(0)}} mph, ${{delta_e_test}}° deflection)</h4>
+
+                <div style="display: flex; gap: 20px;">
+                    <div style="flex: 1;">
+                        <h5 style="margin: 5px 0;">Rotary Servo - Force vs Arm Length</h5>
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <tr style="background: #40466e; color: white;">
+                                <th style="padding: 5px; border: 1px solid #ccc;">Arm Length</th>
+                                <th style="padding: 5px; border: 1px solid #ccc;">Force Required</th>
+                                <th style="padding: 5px; border: 1px solid #ccc;">Force (N)</th>
+                            </tr>
+                            ${{servo_arms_in.map((arm, i) => `
+                            <tr style="background: ${{servo_forces_lb[i] > 500 ? '#ffcccc' : servo_forces_lb[i] > 200 ? '#ffffcc' : '#ccffcc'}};">
+                                <td style="padding: 5px; border: 1px solid #e0e0e0;">${{arm.toFixed(2)}} in</td>
+                                <td style="padding: 5px; border: 1px solid #e0e0e0; font-weight: bold;">${{servo_forces_lb[i].toFixed(1)}} lb</td>
+                                <td style="padding: 5px; border: 1px solid #e0e0e0;">${{(servo_forces_lb[i] * 4.448).toFixed(1)}} N</td>
+                            </tr>
+                            `).join('')}}
+                        </table>
+                    </div>
+
+                    <div style="flex: 1;">
+                        <h5 style="margin: 5px 0;">Linear Actuator - Force vs Stroke</h5>
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <tr style="background: #40466e; color: white;">
+                                <th style="padding: 5px; border: 1px solid #ccc;">Stroke</th>
+                                <th style="padding: 5px; border: 1px solid #ccc;">Force Required</th>
+                                <th style="padding: 5px; border: 1px solid #ccc;">Force (N)</th>
+                            </tr>
+                            ${{actuator_strokes_in.map((stroke, i) => `
+                            <tr style="background: ${{actuator_forces_lb[i] > 500 ? '#ffcccc' : actuator_forces_lb[i] > 200 ? '#ffffcc' : '#ccffcc'}};">
+                                <td style="padding: 5px; border: 1px solid #e0e0e0;">${{stroke.toFixed(1)}} in</td>
+                                <td style="padding: 5px; border: 1px solid #e0e0e0; font-weight: bold;">${{actuator_forces_lb[i].toFixed(1)}} lb</td>
+                                <td style="padding: 5px; border: 1px solid #e0e0e0;">${{(actuator_forces_lb[i] * 4.448).toFixed(1)}} N</td>
+                            </tr>
+                            `).join('')}}
+                        </table>
+                    </div>
+                </div>
+
+                <h4 style="margin-top: 20px; margin-bottom: 10px;">Hinge Moment vs Airspeed (at ${{delta_e_test}}° deflection)</h4>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr style="background: #40466e; color: white;">
+                        <th style="padding: 5px; border: 1px solid #ccc;">Speed (mph)</th>
+                        ${{speeds_mph.map(v => `<th style="padding: 5px; border: 1px solid #ccc;">${{v}}</th>`).join('')}}
+                    </tr>
+                    <tr>
+                        <td style="padding: 5px; border: 1px solid #e0e0e0; font-weight: bold;">HM (lb-in)</td>
+                        ${{hinge_moments_vs_speed.map(hm => `<td style="padding: 5px; border: 1px solid #e0e0e0; background: ${{hm > 5000 ? '#ffcccc' : hm > 2000 ? '#ffffcc' : '#ccffcc'}};">${{hm.toFixed(0)}}</td>`).join('')}}
+                    </tr>
+                    <tr>
+                        <td style="padding: 5px; border: 1px solid #e0e0e0; font-weight: bold;">HM (N-m)</td>
+                        ${{hinge_moments_vs_speed.map(hm => `<td style="padding: 5px; border: 1px solid #e0e0e0;">${{(hm * 0.113).toFixed(1)}}</td>`).join('')}}
+                    </tr>
+                    <tr>
+                        <td style="padding: 5px; border: 1px solid #e0e0e0;">Force @ 1" arm (lb)</td>
+                        ${{hinge_moments_vs_speed.map(hm => `<td style="padding: 5px; border: 1px solid #e0e0e0;">${{hm.toFixed(0)}}</td>`).join('')}}
+                    </tr>
+                    <tr>
+                        <td style="padding: 5px; border: 1px solid #e0e0e0;">Force @ 2" arm (lb)</td>
+                        ${{hinge_moments_vs_speed.map(hm => `<td style="padding: 5px; border: 1px solid #e0e0e0;">${{(hm/2).toFixed(0)}}</td>`).join('')}}
+                    </tr>
+                </table>
+
+                <div style="margin-top: 15px; padding: 10px; background: #f5f5f5; border: 1px solid #ddd;">
+                    <b>Actuator Sizing Guidelines:</b>
+                    <ul style="margin: 5px 0; padding-left: 20px; font-size: 9px;">
+                        <li><span style="background: #ccffcc; padding: 2px 5px;">Green</span> - Light load, hobby servos may work</li>
+                        <li><span style="background: #ffffcc; padding: 2px 5px;">Yellow</span> - Moderate load, industrial servos recommended</li>
+                        <li><span style="background: #ffcccc; padding: 2px 5px;">Red</span> - Heavy load, hydraulic or high-power electric actuator required</li>
+                    </ul>
+                    <p style="font-size: 9px; margin: 5px 0;">
+                        <b>Notes:</b> Forces shown are per elevon (total for both sides = 2×).
+                        Linear actuator forces assume perpendicular mounting at mid-travel.
+                        Add 50-100% safety factor for dynamic loads and gusts.
+                    </p>
+                </div>
+
+                <p style="margin-top: 15px; font-size: 9px; font-style: italic;">
+                    <b>Calculation Notes:</b><br>
+                    • Hinge moment: HM = Ch × q × S_ref × c_ref (from AVL HM command)<br>
+                    • Servo force: F = HM / arm_length<br>
+                    • Linear actuator effective arm ≈ stroke/2 for ±30° rotation<br>
+                    • HM scales with V² (dynamic pressure)
                 </p>
             </div>
         `;
@@ -1803,4 +2153,408 @@ class HTMLViewer:
             line: {{ color: '#000000', width: 2 }},
             marker: {{ color: '#000000', size: 4 }}
         }}], freqLayout, {{responsive: true, displayModeBar: false}});
+
+        // === RANGE ANALYSIS ===
+        // Breguet Range Equation: R = (V / SFC) * (L/D) * ln(W1/W2)
+
+        const fuel_mass_lbm = mass_props.fuel_mass_lbm;
+        const total_mass_lbm = mass_props.mass_lbm;
+
+        if (fuel_mass_lbm && fuel_mass_lbm > 0) {{
+            const empty_weight_lbm = total_mass_lbm - fuel_mass_lbm;
+            const W1 = total_mass_lbm;  // Initial weight (full fuel)
+            const W2 = empty_weight_lbm;  // Final weight (fuel exhausted)
+
+            // Typical SFC values for small piston engines
+            // Avgas: ~0.45 lb/(hp·hr) for best economy
+            // Converting to lb/(lb·hr) requires knowing thrust/power relationship
+            // For propeller aircraft: SFC_thrust = SFC_power * V / (550 * eta_prop)
+            // Simplified: use 0.5-0.7 lb/hr per lb-thrust for small props
+
+            // Reference L/D from AVL data
+            let LD_max = 15;  // Default estimate
+            if (avlPolar !== null) {{
+                // Find max L/D from polar data
+                const avl_ld = avlPolar.CL.map((cl, i) => {{
+                    const cd_ind = avlPolar.CD_induced[i];
+                    const cd_total = cd_ind + 0.01;  // Add estimated profile drag
+                    return cl / cd_total;
+                }});
+                LD_max = Math.max(...avl_ld);
+            }}
+
+            // Build range calculator HTML
+            const sfc_options = [
+                {{ name: 'Efficient Piston (cruise)', sfc: 0.45 }},
+                {{ name: 'Typical Piston', sfc: 0.55 }},
+                {{ name: 'High Performance Piston', sfc: 0.65 }},
+                {{ name: 'Small Turboprop', sfc: 0.50 }},
+                {{ name: 'Jet (lb/lbf/hr)', sfc: 0.80 }}
+            ];
+
+            // ============================================================
+            // MISSION SEGMENT ANALYSIS
+            // ============================================================
+            // Using fuel fractions for each mission segment (Raymer method)
+            // W_i+1 / W_i = fuel fraction for segment i
+            //
+            // Typical fuel fractions:
+            // - Warmup & Taxi:  0.970 (3% fuel burn)
+            // - Takeoff:        0.985 (1.5% fuel burn)
+            // - Climb:          0.980 (2% fuel burn)
+            // - Cruise:         Breguet equation
+            // - Loiter:         Breguet endurance
+            // - Descent:        0.990 (1% fuel burn - mostly glide)
+            // - Landing & Taxi: 0.995 (0.5% fuel burn)
+
+            const eta_prop = 0.80;  // Propeller efficiency (typical 0.75-0.85)
+            const SFC_cruise = 0.45;  // lb/(hp·hr) at cruise - typical efficient piston
+            const V_cruise_kts = 175;  // knots cruise speed
+            const V_cruise_mph = V_cruise_kts * 1.15078;
+            const loiter_time_hr = 0.5;  // 30 min loiter
+            const LD_loiter = LD_max * 0.9;  // L/D at loiter speed (slightly lower)
+
+            // Mission segment fuel fractions (weight ratio W_end/W_start)
+            const ff_warmup_taxi = 0.970;
+            const ff_takeoff = 0.985;
+            const ff_climb = 0.980;
+            const ff_descent = 0.990;
+            const ff_landing = 0.995;
+
+            // Breguet range equation for cruise (propeller aircraft)
+            // R_nm = (eta_prop / SFC) × (L/D) × ln(W1/W2) × 325.87
+            function breguetRangeNm(SFC_lb_hp_hr, LD, W1_lb, W2_lb, eta_prop) {{
+                const range_nm = (eta_prop / SFC_lb_hp_hr) * LD * Math.log(W1_lb / W2_lb) * 325.87;
+                return range_nm;
+            }}
+
+            // Breguet endurance equation for loiter (propeller aircraft)
+            // E_hr = (eta_prop / SFC) × (L/D) × ln(W1/W2) × (1/V) × 325.87
+            // Simplified: E = R / V
+            function breguetEnduranceHr(SFC_lb_hp_hr, LD, W1_lb, W2_lb, eta_prop) {{
+                // Returns endurance in hours
+                // For loiter, we solve for fuel fraction given time
+                // W2/W1 = exp(-E × V × SFC / (eta × L/D × 325.87))
+                return (eta_prop / SFC_lb_hp_hr) * LD * Math.log(W1_lb / W2_lb) * 325.87 / V_cruise_kts;
+            }}
+
+            // Calculate loiter fuel fraction for given time
+            function loiterFuelFraction(E_hr, SFC_lb_hp_hr, LD, eta_prop, V_loiter_kts) {{
+                // W2/W1 = exp(-E × SFC × V / (eta × L/D × 325.87))
+                const V_loiter = V_cruise_kts * 0.7;  // Loiter at 70% cruise speed
+                const exponent = -E_hr * SFC_lb_hp_hr * V_loiter / (eta_prop * LD * 325.87);
+                return Math.exp(exponent);
+            }}
+
+            const ff_loiter = loiterFuelFraction(loiter_time_hr, SFC_cruise, LD_loiter, eta_prop, V_cruise_kts * 0.7);
+
+            // Calculate weight at each mission segment
+            // W0 = MTOW (W1 in our notation)
+            const W0_takeoff = W1;
+            const W1_after_warmup = W0_takeoff * ff_warmup_taxi;
+            const W2_after_takeoff = W1_after_warmup * ff_takeoff;
+            const W3_after_climb = W2_after_takeoff * ff_climb;
+            // W4_after_cruise = W3 × ff_cruise (Breguet - this is what we solve for)
+            // W5_after_loiter = W4 × ff_loiter
+            const W6_after_descent_factor = ff_descent;
+            const W7_landing_factor = ff_landing;
+
+            // Total non-cruise fuel fraction
+            const ff_non_cruise = ff_warmup_taxi * ff_takeoff * ff_climb * ff_loiter * ff_descent * ff_landing;
+
+            // Reserve fuel (6% of initial fuel for 45 min reserve at cruise)
+            const reserve_fraction = 0.06;
+
+            // Available fuel for cruise
+            // W_fuel_available = W0 - W_empty = fuel_mass
+            // But we need to account for non-cruise segments
+            // W3 (start cruise) / W0 = ff_warmup × ff_takeoff × ff_climb
+            // W_final / W3 = ff_cruise × ff_loiter × ff_descent × ff_landing
+            // W_final = W_empty + reserve = W0 - fuel_mass + reserve_fuel
+
+            const W_start_cruise = W3_after_climb;
+            const reserve_fuel = fuel_mass_lbm * reserve_fraction;
+            const W_end_mission = W2 + reserve_fuel;  // Empty + reserve
+
+            // Work backwards from end of mission
+            // W_after_landing = W_end_mission
+            // W_after_descent = W_after_landing / ff_landing
+            // W_after_loiter = W_after_descent / ff_descent
+            // W_after_cruise = W_after_loiter / ff_loiter
+            const W_after_landing = W_end_mission;
+            const W_after_descent = W_after_landing / ff_landing;
+            const W_after_loiter = W_after_descent / ff_descent;
+            const W_after_cruise = W_after_loiter / ff_loiter;
+
+            // Cruise fuel fraction
+            const ff_cruise = W_after_cruise / W_start_cruise;
+
+            // Calculate cruise range using Breguet
+            const cruise_range_nm = breguetRangeNm(SFC_cruise, LD_max, W_start_cruise, W_after_cruise, eta_prop);
+
+            // Total mission fuel burned
+            const fuel_burned_warmup = W0_takeoff - W1_after_warmup;
+            const fuel_burned_takeoff = W1_after_warmup - W2_after_takeoff;
+            const fuel_burned_climb = W2_after_takeoff - W3_after_climb;
+            const fuel_burned_cruise = W_start_cruise - W_after_cruise;
+            const fuel_burned_loiter = W_after_cruise - W_after_loiter;
+            const fuel_burned_descent = W_after_loiter - W_after_descent;
+            const fuel_burned_landing = W_after_descent - W_after_landing;
+            const total_fuel_burned = fuel_mass_lbm - reserve_fuel;
+
+            // Endurance calculation
+            const cruise_time_hr = cruise_range_nm / V_cruise_kts;
+            const total_endurance_hr = cruise_time_hr + loiter_time_hr + 0.25;  // +15 min for other segments
+
+            const rangeCalcHTML = `
+                <div style="font-family: 'Courier New', monospace; font-size: 10px;">
+                    <h4 style="margin: 10px 0;">Mission Segment Analysis</h4>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr style="background: #40466e; color: white;">
+                            <th style="padding: 5px; border: 1px solid #ccc; text-align: left;">Segment</th>
+                            <th style="padding: 5px; border: 1px solid #ccc;">W_start (lb)</th>
+                            <th style="padding: 5px; border: 1px solid #ccc;">W_end (lb)</th>
+                            <th style="padding: 5px; border: 1px solid #ccc;">Fuel (lb)</th>
+                            <th style="padding: 5px; border: 1px solid #ccc;">W_i+1/W_i</th>
+                        </tr>
+                        <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">1. Warmup & Taxi</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W0_takeoff.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W1_after_warmup.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_warmup.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_warmup_taxi.toFixed(3)}}</td></tr>
+                        <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">2. Takeoff</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W1_after_warmup.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W2_after_takeoff.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_takeoff.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_takeoff.toFixed(3)}}</td></tr>
+                        <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">3. Climb</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W2_after_takeoff.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W3_after_climb.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_climb.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_climb.toFixed(3)}}</td></tr>
+                        <tr style="background: #e3f2fd;"><td style="padding: 4px; border: 1px solid #e0e0e0; font-weight: bold;">4. Cruise</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_start_cruise.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_cruise.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0; font-weight: bold;">${{fuel_burned_cruise.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_cruise.toFixed(3)}}</td></tr>
+                        <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">5. Loiter (${{(loiter_time_hr*60).toFixed(0)}} min)</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_cruise.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_loiter.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_loiter.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_loiter.toFixed(3)}}</td></tr>
+                        <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">6. Descent</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_loiter.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_descent.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_descent.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_descent.toFixed(3)}}</td></tr>
+                        <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">7. Landing & Taxi</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_descent.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_landing.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_landing.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_landing.toFixed(3)}}</td></tr>
+                        <tr style="background: #fff3e0;"><td style="padding: 4px; border: 1px solid #e0e0e0;">Reserve (6%)</td><td colspan="2" style="padding: 4px; border: 1px solid #e0e0e0;"></td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{reserve_fuel.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">-</td></tr>
+                        <tr style="background: #e8e8e8; font-weight: bold;"><td style="padding: 4px; border: 1px solid #e0e0e0;">TOTAL</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W0_takeoff.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W2.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_mass_lbm.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">-</td></tr>
+                    </table>
+
+                    <h4 style="margin: 20px 0 10px 0;">Mission Range @ ${{V_cruise_kts}} kts Cruise</h4>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr style="background: #40466e; color: white;">
+                            <th style="padding: 5px; border: 1px solid #ccc; text-align: left;">Metric</th>
+                            <th style="padding: 5px; border: 1px solid #ccc;">Value</th>
+                            <th style="padding: 5px; border: 1px solid #ccc;">Units</th>
+                        </tr>
+                        <tr style="background: #c8e6c9;">
+                            <td style="padding: 8px; border: 1px solid #e0e0e0; font-weight: bold;">Cruise Range</td>
+                            <td style="padding: 8px; border: 1px solid #e0e0e0; font-weight: bold; font-size: 14px;">${{cruise_range_nm.toFixed(0)}}</td>
+                            <td style="padding: 8px; border: 1px solid #e0e0e0;">nm</td>
+                        </tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Cruise Range (statute miles)</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{(cruise_range_nm * 1.15078).toFixed(0)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">mi</td></tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Cruise Range (km)</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{(cruise_range_nm * 1.852).toFixed(0)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">km</td></tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Cruise Time</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{cruise_time_hr.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">hr</td></tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Total Endurance</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{total_endurance_hr.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">hr</td></tr>
+                    </table>
+
+                    <h4 style="margin: 20px 0 10px 0;">Analysis Parameters</h4>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr style="background: #40466e; color: white;">
+                            <th style="padding: 5px; border: 1px solid #ccc; text-align: left;">Parameter</th>
+                            <th style="padding: 5px; border: 1px solid #ccc;">Value</th>
+                            <th style="padding: 5px; border: 1px solid #ccc;">Units</th>
+                        </tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">MTOW</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{W1.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">lbm</td></tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Empty Weight</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{W2.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">lbm</td></tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Fuel Capacity</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{fuel_mass_lbm.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">lbm</td></tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Max L/D</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{LD_max.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">-</td></tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">SFC (cruise)</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{SFC_cruise.toFixed(2)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">lb/(hp·hr)</td></tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Propeller Efficiency</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{(eta_prop * 100).toFixed(0)}}%</td><td style="padding: 5px; border: 1px solid #e0e0e0;">-</td></tr>
+                    </table>
+                </div>
+            `;
+            document.getElementById('range-calculator').innerHTML = rangeCalcHTML;
+
+            // Use cruise_range_nm for mission profile
+            const range_nm = cruise_range_nm;
+
+            // Endurance calculator
+            const enduranceHTML = `
+                <div style="font-family: 'Courier New', monospace; font-size: 10px;">
+                    <h4 style="margin: 10px 0;">Endurance Summary</h4>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr style="background: #40466e; color: white;">
+                            <th style="padding: 5px; border: 1px solid #ccc; text-align: left;">Segment</th>
+                            <th style="padding: 5px; border: 1px solid #ccc;">Time</th>
+                            <th style="padding: 5px; border: 1px solid #ccc;">Units</th>
+                        </tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Cruise @ ${{V_cruise_kts}} kts</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{cruise_time_hr.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">hr</td></tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Loiter</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{(loiter_time_hr * 60).toFixed(0)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">min</td></tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Other segments (approx)</td><td style="padding: 5px; border: 1px solid #e0e0e0;">15</td><td style="padding: 5px; border: 1px solid #e0e0e0;">min</td></tr>
+                        <tr style="background: #c8e6c9;">
+                            <td style="padding: 8px; border: 1px solid #e0e0e0; font-weight: bold;">Total Mission Time</td>
+                            <td style="padding: 8px; border: 1px solid #e0e0e0; font-weight: bold; font-size: 14px;">${{total_endurance_hr.toFixed(1)}}</td>
+                            <td style="padding: 8px; border: 1px solid #e0e0e0;">hr</td>
+                        </tr>
+                    </table>
+                </div>
+            `;
+            document.getElementById('endurance-calculator').innerHTML = enduranceHTML;
+
+            // Mission Profile Plot
+            // Typical mission: Warmup/Taxi -> Takeoff -> Climb -> Cruise -> Loiter -> Descent -> Landing
+            const cruise_alt = 20000;  // ft
+            const loiter_alt = 5000;   // ft
+            const climb_dist_nm = 20;  // nm to climb
+            const descent_dist_nm = 30; // nm to descend
+            const loiter_time_min = 30; // minutes loiter
+            const loiter_dist_nm = (loiter_time_min / 60) * V_cruise_kts * 0.7;  // at 70% cruise speed
+
+            // Mission segments (distance in nm, altitude in ft)
+            const mission_x = [0, 0, climb_dist_nm, climb_dist_nm + range_nm, climb_dist_nm + range_nm + descent_dist_nm/2, climb_dist_nm + range_nm + descent_dist_nm/2 + loiter_dist_nm, climb_dist_nm + range_nm + descent_dist_nm + loiter_dist_nm, climb_dist_nm + range_nm + descent_dist_nm + loiter_dist_nm];
+            const mission_y = [0, 0, cruise_alt, cruise_alt, loiter_alt, loiter_alt, 0, 0];
+
+            // Simplified mission for cleaner look
+            const simple_x = [0, 5, climb_dist_nm, climb_dist_nm + range_nm, climb_dist_nm + range_nm + 10, climb_dist_nm + range_nm + 10 + loiter_dist_nm, climb_dist_nm + range_nm + descent_dist_nm + loiter_dist_nm, climb_dist_nm + range_nm + descent_dist_nm + loiter_dist_nm + 5];
+            const simple_y = [0, 0, cruise_alt, cruise_alt, loiter_alt, loiter_alt, 0, 0];
+
+            const total_mission_nm = simple_x[simple_x.length - 1];
+
+            // Cruise midpoint for annotation
+            const cruise_mid_x = climb_dist_nm + range_nm / 2;
+
+            const missionLayout = Object.assign({{}}, cadLayout, {{
+                title: 'MISSION PROFILE',
+                autosize: false,
+                width: 1400,
+                height: 320,
+                margin: {{ l: 60, r: 30, t: 40, b: 50 }},
+                xaxis: Object.assign({{}}, cadLayout.xaxis, {{
+                    title: 'Distance (nm)',
+                    range: [-10, total_mission_nm + 20]
+                }}),
+                yaxis: Object.assign({{}}, cadLayout.yaxis, {{
+                    title: 'Altitude (ft)',
+                    range: [-2000, cruise_alt * 1.2]
+                }}),
+                showlegend: false,
+                annotations: [
+                    {{
+                        x: 2.5,
+                        y: -1000,
+                        text: 'Warmup &<br>Takeoff',
+                        showarrow: false,
+                        font: {{ size: 9, color: '#333' }}
+                    }},
+                    {{
+                        x: climb_dist_nm / 2 + 2,
+                        y: cruise_alt / 2,
+                        text: 'Climb',
+                        showarrow: false,
+                        font: {{ size: 10, color: '#333' }}
+                    }},
+                    {{
+                        x: cruise_mid_x,
+                        y: cruise_alt + 1500,
+                        text: `<b>Cruise: ${{range_nm.toFixed(0)}} nm</b>`,
+                        showarrow: true,
+                        arrowhead: 2,
+                        arrowcolor: '#cc0000',
+                        ax: 0,
+                        ay: 30,
+                        font: {{ size: 12, color: '#cc0000', family: 'Courier New' }}
+                    }},
+                    {{
+                        x: climb_dist_nm + range_nm + 10 + loiter_dist_nm / 2,
+                        y: loiter_alt + 1500,
+                        text: 'Loiter',
+                        showarrow: false,
+                        font: {{ size: 10, color: '#333' }}
+                    }},
+                    {{
+                        x: climb_dist_nm + range_nm + descent_dist_nm + loiter_dist_nm + 2,
+                        y: -1000,
+                        text: 'Landing',
+                        showarrow: false,
+                        font: {{ size: 9, color: '#333' }}
+                    }}
+                ],
+                shapes: [
+                    // Cruise distance bracket
+                    {{
+                        type: 'line',
+                        x0: climb_dist_nm,
+                        x1: climb_dist_nm + range_nm,
+                        y0: cruise_alt - 1000,
+                        y1: cruise_alt - 1000,
+                        line: {{ color: '#cc0000', width: 2 }}
+                    }},
+                    {{
+                        type: 'line',
+                        x0: climb_dist_nm,
+                        x1: climb_dist_nm,
+                        y0: cruise_alt - 1500,
+                        y1: cruise_alt - 500,
+                        line: {{ color: '#cc0000', width: 2 }}
+                    }},
+                    {{
+                        type: 'line',
+                        x0: climb_dist_nm + range_nm,
+                        x1: climb_dist_nm + range_nm,
+                        y0: cruise_alt - 1500,
+                        y1: cruise_alt - 500,
+                        line: {{ color: '#cc0000', width: 2 }}
+                    }},
+                    // Loiter circle marker
+                    {{
+                        type: 'circle',
+                        x0: climb_dist_nm + range_nm + 10 + loiter_dist_nm / 2 - 5,
+                        x1: climb_dist_nm + range_nm + 10 + loiter_dist_nm / 2 + 5,
+                        y0: loiter_alt - 800,
+                        y1: loiter_alt + 800,
+                        line: {{ color: '#333', width: 1 }}
+                    }}
+                ]
+            }});
+
+            Plotly.newPlot('mission-profile-plot', [{{
+                x: simple_x,
+                y: simple_y,
+                type: 'scatter',
+                mode: 'lines',
+                line: {{ color: '#000000', width: 2 }},
+                fill: 'tozeroy',
+                fillcolor: 'rgba(200, 230, 201, 0.3)'
+            }}], missionLayout, {{responsive: true, displayModeBar: false}});
+
+            // Plot Range vs L/D
+            const ld_range = [];
+            const range_ld_vals = [];
+            for (let ld = 5; ld <= 30; ld += 0.5) {{
+                ld_range.push(ld);
+                range_ld_vals.push(breguetRangeNm(SFC_cruise, ld, W1, W2, eta_prop));
+            }}
+
+            const rangeLDLayout = Object.assign({{}}, cadLayout, {{
+                title: 'RANGE vs LIFT-TO-DRAG RATIO',
+                xaxis: Object.assign({{}}, cadLayout.xaxis, {{ title: 'L/D Ratio' }}),
+                yaxis: Object.assign({{}}, cadLayout.yaxis, {{ title: 'Range (nm)' }}),
+                showlegend: false,
+                shapes: [{{
+                    type: 'line',
+                    x0: LD_max,
+                    x1: LD_max,
+                    y0: 0,
+                    y1: Math.max(...range_ld_vals) * 1.1,
+                    line: {{ color: '#cc0000', width: 2, dash: 'dash' }}
+                }}],
+                annotations: [{{
+                    x: LD_max,
+                    y: Math.max(...range_ld_vals) * 0.95,
+                    text: `Aircraft L/D = ${{LD_max.toFixed(1)}}`,
+                    showarrow: true,
+                    arrowhead: 2,
+                    ax: 40,
+                    ay: -30,
+                    font: {{ size: 11, color: '#cc0000' }}
+                }}]
+            }});
+
+            Plotly.newPlot('range-ld-plot', [{{
+                x: ld_range,
+                y: range_ld_vals,
+                type: 'scatter',
+                mode: 'lines',
+                line: {{ color: '#000000', width: 2 }}
+            }}], rangeLDLayout, {{responsive: true, displayModeBar: false}});
+        }}
         """

@@ -31,6 +31,7 @@ class MassProperties:
     mass: float  # lbm (pounds mass)
     cg: np.ndarray  # [x, y, z] in feet
     inertia: np.ndarray  # 3x3 inertia tensor [lbm⋅ft²]
+    fuel_mass: Optional[float] = None  # lbm (pounds mass) - fuel capacity
 
     def __post_init__(self) -> None:
         """Validate and convert arrays."""
@@ -77,6 +78,7 @@ class GeometryData:
     trailing_edge: PanelPoints
     winglet: Optional[PanelPoints] = None
     elevon: Optional[PanelPoints] = None
+    tail: Optional[PanelPoints] = None
 
     def get_all_panels(self) -> list[PanelPoints]:
         """Get list of all panel point sets."""
@@ -85,6 +87,8 @@ class GeometryData:
             panels.append(self.winglet)
         if self.elevon:
             panels.append(self.elevon)
+        if self.tail:
+            panels.append(self.tail)
         return panels
 
     def get_overall_bounds(self) -> tuple[np.ndarray, np.ndarray]:
@@ -170,6 +174,13 @@ class GeometryLoader:
             )
             self.logger.success(f"ELEVONpts.csv ({elevon_points.n_points} points)")
 
+        tail_points = None
+        if (folder / "TAILpts.csv").exists():
+            tail_points = self._load_panel_points(
+                folder / "TAILpts.csv", "Tail"
+            )
+            self.logger.success(f"TAILpts.csv ({tail_points.n_points} points)")
+
         self.logger.dedent()
 
         geometry = GeometryData(
@@ -178,6 +189,7 @@ class GeometryLoader:
             trailing_edge=te_points,
             winglet=winglet_points,
             elevon=elevon_points,
+            tail=tail_points,
         )
 
         return geometry
@@ -251,11 +263,18 @@ class GeometryLoader:
                 [Ixz, Iyz, Izz],
             ])
 
+            # Try to read fuel mass (optional column)
+            fuel_mass = None
+            try:
+                fuel_mass = get_value(["fuel_mass"], -1)
+            except (ValueError, IndexError):
+                pass  # fuel_mass column not present
+
             # Convert from inches to feet for AVL
             cg_ft = cg * INCHES_TO_FEET
             inertia_ft = inertia * IN2_TO_FT2  # lbm⋅in² to lbm⋅ft²
 
-            return MassProperties(mass=mass, cg=cg_ft, inertia=inertia_ft)
+            return MassProperties(mass=mass, cg=cg_ft, inertia=inertia_ft, fuel_mass=fuel_mass)
 
         except Exception as e:
             raise ValueError(f"Failed to load mass properties: {e}")

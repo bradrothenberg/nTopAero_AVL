@@ -237,6 +237,14 @@ def generate(
                 logger.info(f"  Elevon: CL_de = {CL_de:.4f} /deg")
                 logger.info(f"  Elevon: Cm_de = {Cm_de:.4f} /deg")
 
+                # Extract hinge moment coefficient from a non-zero deflection case
+                for case in control_cases:
+                    result = elevon_results.get(case.name)
+                    if result and result.Ch_elevon is not None and abs(case.elevon) > 1e-6:
+                        control_derivatives['Ch_elevon'] = float(result.Ch_elevon)
+                        logger.info(f"  Elevon: Ch = {result.Ch_elevon:.6f} (hinge moment coeff)")
+                        break
+
         # Aileron derivatives (roll control)
         if len(aileron_results) >= 3:
             # Extract Cl, Cn for each aileron deflection
@@ -261,6 +269,14 @@ def generate(
 
                 logger.info(f"  Aileron: Cl_da = {Cl_da:.4f} /deg")
                 logger.info(f"  Aileron: Cn_da = {Cn_da:.4f} /deg (adverse yaw)")
+
+                # Extract hinge moment coefficient from a non-zero deflection case
+                for case in aileron_cases:
+                    result = aileron_results.get(case.name)
+                    if result and result.Ch_aileron is not None and abs(case.aileron) > 1e-6:
+                        control_derivatives['Ch_aileron'] = float(result.Ch_aileron)
+                        logger.info(f"  Aileron: Ch = {result.Ch_aileron:.6f} (hinge moment coeff)")
+                        break
 
         # Phase 4.6: Generate XFOIL Polars
         logger.section("Phase 4.6: XFOIL Airfoil Polars")
@@ -349,7 +365,8 @@ def generate(
             Izz=inertia[2, 2],
             Ixy=inertia[0, 1],
             Ixz=inertia[0, 2],
-            Iyz=inertia[1, 2]
+            Iyz=inertia[1, 2],
+            fuel_mass=geometry.mass_properties.fuel_mass
         )
 
         # Create aerodeck (use stability which has all derivatives including Xnp)
@@ -704,6 +721,261 @@ def version() -> None:
     """Show version information."""
     click.echo(f"nTop AeroDeck Generator v{__version__}")
     click.echo("Copyright (c) 2025 nTop Aero Team")
+
+
+@main.command()
+@click.argument('aerodeck_file', type=click.Path(exists=True, path_type=Path))
+@click.option(
+    '--load-factor', '-g',
+    default=6.0,
+    help='Load factor (g) for max-g condition (default: 6.0)'
+)
+@click.option(
+    '--velocity', '-v',
+    default=None,
+    type=float,
+    help='Velocity in mph (default: uses design cruise speed from aerodeck)'
+)
+@click.option(
+    '--altitude', '-alt',
+    default=20000,
+    type=float,
+    help='Altitude in feet (default: 20000)'
+)
+@click.option(
+    '--chord-percent', '-c',
+    default=25.0,
+    type=float,
+    help='Chordwise position for load application as percent (default: 25 = quarter-chord)'
+)
+@click.option(
+    '--output', '-o',
+    type=click.Path(path_type=Path),
+    default=None,
+    help='Output CSV file (default: <aerodeck>_loads.csv)'
+)
+@click.option('--verbose', is_flag=True, help='Verbose output')
+def loads(
+    aerodeck_file: Path,
+    load_factor: float,
+    velocity: Optional[float],
+    altitude: float,
+    chord_percent: float,
+    output: Optional[Path],
+    verbose: bool
+) -> None:
+    """
+    Export spanwise wing loads at max-g condition for nTop FEA import.
+
+    Generates a CSV with X, Y, Z positions and lift force at each spanwise station.
+    The loads are computed at the specified load factor (g) and can be imported
+    into nTop for bending simulation.
+
+    AERODECK_FILE: Path to aerodeck JSON file
+
+    Examples:
+        aerodeck loads results/aircraft_aerodeck.json -g 6 -v 250
+        aerodeck loads results/aircraft_aerodeck.json --load-factor 4.5 --altitude 10000
+    """
+    import json
+
+    logger = get_logger(verbose=verbose)
+
+    try:
+        click.echo(f"\n{'='*60}")
+        click.echo("  nTop AeroDeck Loads Export")
+        click.echo(f"{'='*60}\n")
+
+        # Load aerodeck JSON
+        click.echo(f"Loading aerodeck: {aerodeck_file.name}")
+        with open(aerodeck_file, 'r') as f:
+            aerodeck_data = json.load(f)
+
+        # Extract reference geometry
+        ref = aerodeck_data.get('reference_geometry', {})
+        S_ref = ref.get('S_ref', 8.4)  # ft²
+        b_ref = ref.get('b_ref', 4.0)  # ft
+        c_ref = ref.get('c_ref', 2.1)  # ft
+
+        # Get mass for weight calculation
+        mass_props = aerodeck_data.get('mass_properties', {})
+        weight_lb = mass_props.get('mass', 50.0) * 2.20462  # kg to lb
+
+        # Get velocity - use provided or extract from aerodeck
+        if velocity is None:
+            flight_cond = aerodeck_data.get('flight_conditions', {})
+            velocity = flight_cond.get('cruise_speed_mph', 209)  # Default 209 mph
+
+        click.echo(f"  Weight: {weight_lb:.1f} lb")
+        click.echo(f"  Load factor: {load_factor:.1f} g")
+        click.echo(f"  Velocity: {velocity:.1f} mph")
+        click.echo(f"  Altitude: {altitude:.0f} ft")
+
+        # Calculate required lift at max-g
+        lift_required_lb = weight_lb * load_factor
+        click.echo(f"  Required lift: {lift_required_lb:.1f} lb")
+
+        # Calculate dynamic pressure at altitude
+        # Standard atmosphere at altitude
+        if altitude <= 36089:  # Troposphere
+            T = 518.67 - 0.00356616 * altitude  # °R
+            p = 2116.22 * (T / 518.67) ** 5.256  # psf
+        else:  # Stratosphere
+            T = 389.97  # °R (constant)
+            p = 472.68 * np.exp(-0.0000480634 * (altitude - 36089))  # psf
+
+        rho = p / (1716.49 * T)  # slug/ft³
+
+        v_fps = velocity * 1.467  # mph to ft/s
+        q = 0.5 * rho * v_fps ** 2  # dynamic pressure, psf
+
+        click.echo(f"  Dynamic pressure: {q:.2f} psf")
+
+        # Calculate CL required
+        CL_required = lift_required_lb / (q * S_ref)
+        click.echo(f"  CL required: {CL_required:.3f}")
+
+        # Get CL_alpha to find required alpha
+        aero = aerodeck_data.get('aerodynamics', {})
+        static = aero.get('static_stability', {})
+        CL_alpha = static.get('CL_alpha', 2.8)  # /rad, default typical value
+        CL_0 = 0.1  # Approximate zero-lift CL
+
+        alpha_required_rad = (CL_required - CL_0) / CL_alpha
+        alpha_required_deg = np.rad2deg(alpha_required_rad)
+
+        click.echo(f"  Alpha required: {alpha_required_deg:.2f}°")
+
+        # Now we need to run AVL at this condition to get strip forces
+        # First, find the AVL file
+        avl_dir = aerodeck_file.parent
+        avl_files = list(avl_dir.glob("*.avl"))
+        if not avl_files:
+            click.echo("Error: No AVL input file found in results directory", err=True)
+            sys.exit(1)
+
+        avl_file = avl_files[0]
+        click.echo(f"\nRunning AVL at max-g condition...")
+        click.echo(f"  AVL file: {avl_file.name}")
+
+        # Run AVL at the required alpha
+        from .analysis.avl_runner import AVLAnalysis, RunCase
+
+        avl_runner = AVLAnalysis(verbose=verbose)
+
+        max_g_case = RunCase(
+            alpha=alpha_required_deg,
+            beta=0.0,
+            mach=velocity / 761.2,  # Approximate Mach at sea level
+            name=f"maxg_{load_factor:.1f}g"
+        )
+
+        results = avl_runner.execute_avl(avl_file, [max_g_case], avl_dir)
+        result = results.get(max_g_case.name)
+
+        if not result:
+            click.echo("Error: AVL failed to converge at max-g condition", err=True)
+            sys.exit(1)
+
+        click.echo(f"  CL actual: {result.CL:.4f}")
+        click.echo(f"  CD actual: {result.CD:.4f}")
+
+        # Check if we got strip forces
+        if not result.strip_forces:
+            click.echo("Error: No strip force data from AVL", err=True)
+            sys.exit(1)
+
+        click.echo(f"  Strip forces: {len(result.strip_forces)} stations")
+
+        # Convert strip forces to dimensional loads
+        # AVL gives us c_cl (chord × section Cl) at each station
+        # The strip area is already provided
+        #
+        # IMPORTANT: AVL geometry is in FEET (loader.py converts inches→feet)
+        # We convert back to inches for nTop FEA import (multiply by 12)
+
+        # Build CSV data
+        # NOTE: Positions are in inches to match nTop geometry units
+        csv_rows = []
+        csv_rows.append("X_in,Y_in,Z_in,Lift_lb,Chord_in,Cl,Surface")
+
+        # Filter to wing surfaces only (exclude tail, etc.)
+        wing_strips = [s for s in result.strip_forces if 'Wing' in s.surface or 'wing' in s.surface.lower()]
+
+        if not wing_strips:
+            # If no explicit "Wing" surface, use all strips
+            wing_strips = result.strip_forces
+            click.echo("  Note: Using all surfaces for loads (no 'Wing' surface found)")
+
+        # AVL's CL is based on the geometry units - we need to compute actual lift
+        # using the aerodynamic result and scale to required lift
+
+        # Total strip areas in AVL units (inches²)
+        total_strip_area = sum(s.area for s in wing_strips)
+
+        # Convert AVL area to ft² (divide by 144)
+        total_strip_area_ft2 = total_strip_area / 144.0
+
+        click.echo(f"  Wing area (from strips): {total_strip_area_ft2:.2f} ft²")
+        click.echo(f"  Reference area (S_ref): {S_ref:.2f} ft²")
+
+        # Compute lift from AVL result
+        # L_avl = q × S_ref × CL
+        # But S_ref in aerodeck is already in ft², and q is in psf
+        lift_avl = q * S_ref * result.CL
+        click.echo(f"  Lift from AVL (at alpha={alpha_required_deg:.1f}°): {lift_avl:.1f} lb")
+
+        # Scale factor to get required lift
+        lift_scale = lift_required_lb / lift_avl if lift_avl > 0 else 1.0
+        click.echo(f"  Lift scaling factor: {lift_scale:.3f}")
+
+        # Distribute lift proportionally across strips based on cl × area
+        total_cl_area = sum(s.cl * s.area for s in wing_strips)
+
+        # Convert chord percent to fraction
+        chord_fraction = chord_percent / 100.0
+        click.echo(f"  Load position: {chord_percent:.0f}% chord")
+
+        for strip in wing_strips:
+            # Position at specified chord fraction
+            # AVL geometry is in feet (converted from inches by loader)
+            # Convert back to inches for nTop import: multiply by 12
+            x_pos = (strip.Xle + chord_fraction * strip.chord) * 12.0
+            y = strip.Yle * 12.0
+            z = strip.Zle * 12.0
+            chord_in = strip.chord * 12.0
+
+            # Lift force on this strip proportional to its cl × area contribution
+            if total_cl_area > 0:
+                lift_lb = lift_required_lb * (strip.cl * strip.area) / total_cl_area
+            else:
+                lift_lb = 0.0
+
+            csv_rows.append(f"{x_pos:.4f},{y:.4f},{z:.4f},{lift_lb:.4f},{chord_in:.4f},{strip.cl:.4f},{strip.surface}")
+
+        # Write CSV
+        if output is None:
+            output = aerodeck_file.parent / f"{aerodeck_file.stem}_loads.csv"
+
+        with open(output, 'w') as f:
+            f.write('\n'.join(csv_rows))
+
+        click.echo(f"\n[OK] Loads exported: {output}")
+        click.echo(f"     {len(wing_strips)} strip stations")
+
+        # Summary
+        total_lift = sum(float(row.split(',')[3]) for row in csv_rows[1:])
+        click.echo(f"     Total lift: {total_lift:.1f} lb")
+        click.echo(f"     Required:   {lift_required_lb:.1f} lb")
+
+        click.echo(f"\n{'='*60}\n")
+
+    except Exception as e:
+        click.echo(f"Error exporting loads: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
