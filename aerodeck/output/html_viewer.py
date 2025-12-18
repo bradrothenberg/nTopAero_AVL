@@ -2211,7 +2211,8 @@ class HTMLViewer:
             const SFC_cruise = 0.45;  // lb/(hp·hr) at cruise - typical efficient piston
             const V_cruise_kts = 175;  // knots cruise speed
             const V_cruise_mph = V_cruise_kts * 1.15078;
-            const loiter_time_hr = 0.5;  // 30 min loiter
+            const loiter_time_hr = 12.0;  // 12 hour loiter
+            const target_cruise_range_nm = 1000;  // Target cruise range in nm
             const LD_loiter = LD_max * 0.9;  // L/D at loiter speed (slightly lower)
 
             // Mission segment fuel fractions (weight ratio W_end/W_start)
@@ -2321,7 +2322,7 @@ class HTMLViewer:
                         <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">2. Takeoff</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W1_after_warmup.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W2_after_takeoff.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_takeoff.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_takeoff.toFixed(3)}}</td></tr>
                         <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">3. Climb</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W2_after_takeoff.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W3_after_climb.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_climb.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_climb.toFixed(3)}}</td></tr>
                         <tr style="background: #e3f2fd;"><td style="padding: 4px; border: 1px solid #e0e0e0; font-weight: bold;">4. Cruise</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_start_cruise.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_cruise.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0; font-weight: bold;">${{fuel_burned_cruise.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_cruise.toFixed(3)}}</td></tr>
-                        <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">5. Loiter (${{(loiter_time_hr*60).toFixed(0)}} min)</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_cruise.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_loiter.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_loiter.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_loiter.toFixed(3)}}</td></tr>
+                        <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">5. Loiter (${{loiter_time_hr.toFixed(0)}} hr)</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_cruise.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_loiter.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_loiter.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_loiter.toFixed(3)}}</td></tr>
                         <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">6. Descent</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_loiter.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_descent.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_descent.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_descent.toFixed(3)}}</td></tr>
                         <tr><td style="padding: 4px; border: 1px solid #e0e0e0;">7. Landing & Taxi</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_descent.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{W_after_landing.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{fuel_burned_landing.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{ff_landing.toFixed(3)}}</td></tr>
                         <tr style="background: #fff3e0;"><td style="padding: 4px; border: 1px solid #e0e0e0;">Reserve (6%)</td><td colspan="2" style="padding: 4px; border: 1px solid #e0e0e0;"></td><td style="padding: 4px; border: 1px solid #e0e0e0;">${{reserve_fuel.toFixed(1)}}</td><td style="padding: 4px; border: 1px solid #e0e0e0;">-</td></tr>
@@ -2364,8 +2365,8 @@ class HTMLViewer:
             `;
             document.getElementById('range-calculator').innerHTML = rangeCalcHTML;
 
-            // Use cruise_range_nm for mission profile
-            const range_nm = cruise_range_nm;
+            // Use target cruise range for mission profile
+            const range_nm = target_cruise_range_nm;
 
             // Endurance calculator
             const enduranceHTML = `
@@ -2378,7 +2379,7 @@ class HTMLViewer:
                             <th style="padding: 5px; border: 1px solid #ccc;">Units</th>
                         </tr>
                         <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Cruise @ ${{V_cruise_kts}} kts</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{cruise_time_hr.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">hr</td></tr>
-                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Loiter</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{(loiter_time_hr * 60).toFixed(0)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">min</td></tr>
+                        <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Loiter</td><td style="padding: 5px; border: 1px solid #e0e0e0;">${{loiter_time_hr.toFixed(1)}}</td><td style="padding: 5px; border: 1px solid #e0e0e0;">hr</td></tr>
                         <tr><td style="padding: 5px; border: 1px solid #e0e0e0;">Other segments (approx)</td><td style="padding: 5px; border: 1px solid #e0e0e0;">15</td><td style="padding: 5px; border: 1px solid #e0e0e0;">min</td></tr>
                         <tr style="background: #c8e6c9;">
                             <td style="padding: 8px; border: 1px solid #e0e0e0; font-weight: bold;">Total Mission Time</td>
@@ -2396,8 +2397,7 @@ class HTMLViewer:
             const loiter_alt = 5000;   // ft
             const climb_dist_nm = 20;  // nm to climb
             const descent_dist_nm = 30; // nm to descend
-            const loiter_time_min = 30; // minutes loiter
-            const loiter_dist_nm = (loiter_time_min / 60) * V_cruise_kts * 0.7;  // at 70% cruise speed
+            const loiter_dist_nm = loiter_time_hr * V_cruise_kts * 0.7;  // at 70% cruise speed for loiter
 
             // Mission segments (distance in nm, altitude in ft)
             const mission_x = [0, 0, climb_dist_nm, climb_dist_nm + range_nm, climb_dist_nm + range_nm + descent_dist_nm/2, climb_dist_nm + range_nm + descent_dist_nm/2 + loiter_dist_nm, climb_dist_nm + range_nm + descent_dist_nm + loiter_dist_nm, climb_dist_nm + range_nm + descent_dist_nm + loiter_dist_nm];
