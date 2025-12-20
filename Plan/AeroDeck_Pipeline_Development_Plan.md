@@ -310,7 +310,7 @@ aerodeck = {
    - Lateral-directional stability derivatives
    - Control effectiveness plots
 
-5. **Stability Derivatives Table**
+5. **Stability Derivatives Table**  
    - Complete derivative matrix
    - Dimensional and non-dimensional forms
    - Mach number effects (if applicable)

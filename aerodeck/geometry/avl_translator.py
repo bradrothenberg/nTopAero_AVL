@@ -83,6 +83,10 @@ class AVLGeometryWriter:
             if geometry.winglet:
                 self._write_winglet(f, geometry.winglet)
 
+            # Write tail surface (vertical stabilizer)
+            if geometry.tail:
+                self._write_tail(f, geometry.tail)
+
         self.logger.success(f"AVL input written: {output_path.name}")
 
         # Write mass file
@@ -298,6 +302,7 @@ class AVLGeometryWriter:
         elevon_tip_le_x = None
         elevon_root_y = None
         elevon_tip_y = None
+        elevon_hinge_vector = None  # Hinge axis direction (normalized)
         if elevon:
             # Get elevon spanwise extent from the elevon points
             # Elevon file is a quadrilateral: [root_LE, tip_LE, tip_TE, root_TE]
@@ -314,16 +319,24 @@ class AVLGeometryWriter:
             elevon_tip_le_x = elevon_x_coords[1]
             elevon_tip_y = elevon_y_coords[1]
 
+            # Calculate hinge vector from elevon geometry (pt1 - pt0 = tip_LE - root_LE)
+            # This gives the direction of the hinge line along the elevon leading edge
+            hinge_vec = elevon_pts[1] - elevon_pts[0]  # [dx, dy, dz]
+            hinge_mag = np.linalg.norm(hinge_vec)
+            if hinge_mag > 0.001:
+                elevon_hinge_vector = hinge_vec / hinge_mag  # Normalize
+
             # Find wing sections that overlap with or are contained within the elevon spanwise range
-            # Strategy: Find the first section >= elevon root and last section that's close to elevon span
+            # Strategy: Find the first section >= elevon root and last section <= elevon tip
+            # AVL control surfaces span BETWEEN sections, so we need CONTROL on both endpoints
             for idx, i in enumerate(sort_idx):
                 y = y_sorted[idx]
                 # Section is at or outboard of elevon root
                 if y >= elevon_y_min - 0.01:
                     if elevon_start_idx == len(sort_idx):
                         elevon_start_idx = idx  # First section at/outboard of elevon root
-                    # Section is at or inboard of elevon tip (or reasonably close for next section)
-                    if y <= elevon_y_max + 0.5:  # Allow next section slightly beyond elevon tip
+                    # Include sections within elevon span (with small tolerance)
+                    if y <= elevon_y_max + 0.05:  # Only include sections within elevon
                         elevon_end_idx = idx  # Update end index
 
         for idx, i in enumerate(sort_idx):
@@ -379,15 +392,22 @@ class AVLGeometryWriter:
                 else:
                     hinge_frac = 0.75  # Default to 75% if no elevon geometry
 
+                # Determine hinge vector from elevon geometry
+                # XYZhvec defines the hinge axis direction
+                if elevon_hinge_vector is not None:
+                    hvec_str = f"{elevon_hinge_vector[0]:.4f} {elevon_hinge_vector[1]:.4f} {elevon_hinge_vector[2]:.4f}"
+                else:
+                    hvec_str = "0. 1. 0."  # Default spanwise axis
+
                 # Elevon: SgnDup = 1.0 means same deflection on both sides (for pitch control)
                 f.write("CONTROL\n")
                 f.write("#Cname   Cgain  Xhinge  XYZhvec  SgnDup\n")
-                f.write(f"elevon   1.0    {hinge_frac:.4f}    0. 0. 0.    1.0\n\n")
+                f.write(f"elevon   1.0    {hinge_frac:.4f}    {hvec_str}    1.0\n\n")
 
                 # Aileron: SgnDup = -1.0 means opposite deflection on each side (for roll control)
                 f.write("CONTROL\n")
                 f.write("#Cname   Cgain  Xhinge  XYZhvec  SgnDup\n")
-                f.write(f"aileron  1.0    {hinge_frac:.4f}    0. 0. 0.   -1.0\n\n")
+                f.write(f"aileron  1.0    {hinge_frac:.4f}    {hvec_str}   -1.0\n\n")
 
     def _interpret_clockwise_panel(self, pts: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -538,6 +558,101 @@ class AVLGeometryWriter:
 
             # Winglets use NACA 0012 symmetric airfoil (flat plate)
             self._write_airfoil_section(f, use_custom_airfoil=False)
+
+    def _write_tail(
+        self,
+        f: TextIO,
+        tail: PanelPoints
+    ) -> None:
+        """
+        Write tail surface definition (vertical stabilizer).
+
+        The tail is typically a vertical surface on the centerline (Y=0),
+        defined as a quadrilateral: [root_LE, root_TE, tip_TE, tip_LE] or similar.
+        We create two sections: root (z=0) and tip (max z).
+        """
+        f.write("#" + "-" * 70 + "\n")
+        f.write("SURFACE\n")
+        f.write("Vertical Tail\n\n")
+
+        f.write("#Nchordwise  Cspace  [Nspanwise  Sspace]\n")
+        f.write("8          1.0\n\n")
+
+        # No YDUPLICATE for vertical tail on centerline
+        # (it's a single surface, not mirrored)
+
+        pts = tail.points
+
+        # Remove closing point if present
+        if len(pts) > 3 and np.allclose(pts[0], pts[-1]):
+            pts = pts[:-1]
+
+        # For a quadrilateral tail, identify root and tip sections
+        # Root is at z ≈ 0, tip is at max z
+        z_coords = pts[:, 2]
+        x_coords = pts[:, 0]
+
+        # Find root points (z ≈ 0) and tip points (z > 0)
+        z_threshold = 0.1  # ft
+        root_mask = z_coords < z_threshold
+        tip_mask = z_coords >= z_threshold
+
+        root_pts = pts[root_mask]
+        tip_pts = pts[tip_mask]
+
+        # Root section: find LE (min x) and TE (max x) at root
+        if len(root_pts) >= 2:
+            root_le_idx = np.argmin(root_pts[:, 0])
+            root_te_idx = np.argmax(root_pts[:, 0])
+            root_le = root_pts[root_le_idx]
+            root_te = root_pts[root_te_idx]
+            root_chord = root_te[0] - root_le[0]
+        elif len(root_pts) == 1:
+            root_le = root_pts[0]
+            root_chord = 0.5  # Default small chord
+        else:
+            # No root points - use lowest z point
+            min_z_idx = np.argmin(z_coords)
+            root_le = pts[min_z_idx]
+            root_chord = 1.0
+
+        # Tip section: find LE (min x) and TE (max x) at tip
+        if len(tip_pts) >= 2:
+            tip_le_idx = np.argmin(tip_pts[:, 0])
+            tip_te_idx = np.argmax(tip_pts[:, 0])
+            tip_le = tip_pts[tip_le_idx]
+            tip_te = tip_pts[tip_te_idx]
+            tip_chord = tip_te[0] - tip_le[0]
+        elif len(tip_pts) == 1:
+            tip_le = tip_pts[0]
+            tip_chord = 0.5  # Default small chord
+        else:
+            # No tip points - use highest z point
+            max_z_idx = np.argmax(z_coords)
+            tip_le = pts[max_z_idx]
+            tip_chord = 0.5
+
+        # Ensure tip chord is positive (if LE and TE are same point or reversed)
+        if tip_chord <= 0:
+            tip_chord = 0.5  # Minimum chord for tip
+
+        # Calculate span for panel distribution
+        z_span = abs(tip_le[2] - root_le[2])
+        nspan = max(5, min(20, int(round(z_span / 0.3))))  # ~0.3 ft panels
+
+        # Write root section
+        f.write("#" + "-" * 70 + "\n")
+        f.write("SECTION\n")
+        f.write(f"#Xle    Yle     Zle     Chord   Ainc  [ Nspan  Sspace ]\n")
+        f.write(f"{root_le[0]:.6f}  {root_le[1]:.6f}  {root_le[2]:.6f}  {root_chord:.6f}  0.0  {nspan}  1.0\n\n")
+        self._write_airfoil_section(f, use_custom_airfoil=False)
+
+        # Write tip section
+        f.write("#" + "-" * 70 + "\n")
+        f.write("SECTION\n")
+        f.write(f"#Xle    Yle     Zle     Chord   Ainc  [ Nspan  Sspace ]\n")
+        f.write(f"{tip_le[0]:.6f}  {tip_le[1]:.6f}  {tip_le[2]:.6f}  {tip_chord:.6f}  0.0\n\n")
+        self._write_airfoil_section(f, use_custom_airfoil=False)
 
     def _write_airfoil_section(self, f: TextIO, use_custom_airfoil: bool = True) -> None:
         """
