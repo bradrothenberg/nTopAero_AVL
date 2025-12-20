@@ -882,22 +882,30 @@ def loads(
         if avl_file is None:
             avl_files = list(avl_dir.glob("*.avl"))
             if not avl_files:
-                click.echo(f"\nWarning: Could not find AVL file for aircraft '{aircraft_name}'", err=True)
+                click.echo(f"\n*** ERROR: Could not find any AVL file ***", err=True)
+                click.echo(f"  Aircraft name: '{aircraft_name}'", err=True)
                 click.echo(f"  Searched for:", err=True)
                 for p in tried_paths:
-                    click.echo(f"    - {p}", err=True)
+                    click.echo(f"    - {Path(p).name}", err=True)
                 click.echo(f"  Directory: {avl_dir}", err=True)
-                click.echo("Error: No AVL input file found in results directory", err=True)
+                click.echo("No AVL input file found in results directory", err=True)
                 sys.exit(1)
+
+            # Found AVL file(s) but none matching aircraft name - show warning
             avl_file = avl_files[0]
-            click.echo(f"\nWarning: Could not find AVL file matching aircraft name '{aircraft_name}'")
-            click.echo(f"  Searched for:")
+            click.echo(f"\n*** WARNING: AVL file mismatch ***", err=True)
+            click.echo(f"  Aircraft name from aerodeck: '{aircraft_name}'", err=True)
+            click.echo(f"  Searched for:", err=True)
             for p in tried_paths:
-                click.echo(f"    - {Path(p).name}")
-            click.echo(f"  Using fallback: {avl_file.name}")
+                click.echo(f"    - {Path(p).name}", err=True)
+            click.echo(f"  Available AVL files in {avl_dir}:", err=True)
+            for f in avl_files:
+                click.echo(f"    - {f.name}", err=True)
+            click.echo(f"  Using fallback: {avl_file.name}", err=True)
+            click.echo(f"  ** Results may be incorrect if this is the wrong geometry! **\n", err=True)
 
         click.echo(f"\nRunning AVL at max-g condition...")
-        click.echo(f"  AVL file: {avl_file.name}")
+        click.echo(f"  AVL file: {avl_file}")
 
         # Run AVL at the required alpha
         from .analysis.avl_runner import AVLAnalysis, RunCase
@@ -940,8 +948,15 @@ def loads(
         csv_rows = []
         csv_rows.append("X_in,Y_in,Z_in,Lift_lb,Chord_in,Cl,Surface")
 
-        # Filter to wing surfaces only (exclude tail, etc.)
-        wing_strips = [s for s in result.strip_forces if 'Wing' in s.surface or 'wing' in s.surface.lower()]
+        # Filter to main wing surfaces only (exclude winglets, tail, etc.)
+        # Check for "Main Wing" first, then fall back to "Wing" but exclude "Winglet"
+        wing_strips = [s for s in result.strip_forces if 'Main Wing' in s.surface]
+
+        if not wing_strips:
+            # Try "Wing" but exclude "Winglet"
+            wing_strips = [s for s in result.strip_forces
+                          if ('Wing' in s.surface or 'wing' in s.surface.lower())
+                          and 'winglet' not in s.surface.lower()]
 
         if not wing_strips:
             # If no explicit "Wing" surface, use all strips
@@ -951,11 +966,8 @@ def loads(
         # AVL's CL is based on the geometry units - we need to compute actual lift
         # using the aerodynamic result and scale to required lift
 
-        # Total strip areas in AVL units (inches²)
-        total_strip_area = sum(s.area for s in wing_strips)
-
-        # Convert AVL area to ft² (divide by 144)
-        total_strip_area_ft2 = total_strip_area / 144.0
+        # Total strip areas - AVL returns in same units as input (feet), so area is ft²
+        total_strip_area_ft2 = sum(s.area for s in wing_strips)
 
         click.echo(f"  Wing area (from strips): {total_strip_area_ft2:.2f} ft²")
         click.echo(f"  Reference area (S_ref): {S_ref:.2f} ft²")
@@ -976,6 +988,11 @@ def loads(
         # Convert chord percent to fraction
         chord_fraction = chord_percent / 100.0
         click.echo(f"  Load position: {chord_percent:.0f}% chord")
+
+        # Debug: show Y range from AVL strips (in feet, before conversion)
+        y_values = [s.Yle for s in wing_strips]
+        click.echo(f"  Strip Y range (from AVL, ft): {min(y_values):.3f} to {max(y_values):.3f}")
+        click.echo(f"  Strip Y range (inches): {min(y_values)*12:.1f} to {max(y_values)*12:.1f}")
 
         for strip in wing_strips:
             # Position at specified chord fraction
@@ -1062,7 +1079,7 @@ def loads(
     help='Chordwise position for load application as percent (default: 25 = quarter-chord)'
 )
 @click.option('--verbose', is_flag=True, help='Verbose output')
-def report(
+def build(
     input_dir: Path,
     output_dir: Optional[Path],
     config: Optional[Path],
@@ -1074,7 +1091,7 @@ def report(
     verbose: bool
 ) -> None:
     """
-    Generate complete aerodeck report with loads in one step.
+    Generate complete aerodeck with AVL analysis and loads in one step.
 
     This combines 'generate' and 'loads' commands into a single operation.
     Generates the aerodeck JSON and exports wing loads CSV for nTop FEA.
@@ -1082,16 +1099,17 @@ def report(
     INPUT_DIR: Directory containing nTop CSV files (mass.csv, LEpts.csv, TEpts.csv, etc.)
 
     Examples:
-        aerodeck report Data/
-        aerodeck report Data/ --aircraft-name "My Aircraft" -g 4.5
+        aerodeck build Data/
+        aerodeck build Data/ --aircraft-name "My Aircraft" -g 4.5
     """
     import json
+    import shutil
     from click.testing import CliRunner
 
     logger = get_logger(verbose=verbose)
 
     click.echo(f"\n{'='*60}")
-    click.echo("  nTop AeroDeck Report Generator")
+    click.echo("  nTop AeroDeck Build (generate + loads)")
     click.echo(f"{'='*60}\n")
 
     # Setup output directory
@@ -1099,6 +1117,22 @@ def report(
         output_dir = Path.cwd() / "results"
 
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Clear any existing AVL outputs to avoid stale data
+    import time
+    avl_output_dir = output_dir / "avl_outputs"
+    if avl_output_dir.exists():
+        # Retry logic for Windows/OneDrive file locks
+        for attempt in range(3):
+            try:
+                shutil.rmtree(avl_output_dir)
+                click.echo("Cleared existing avl_outputs folder")
+                break
+            except PermissionError:
+                if attempt < 2:
+                    time.sleep(0.5)  # Wait for file locks to release
+                else:
+                    click.echo("Warning: Could not clear avl_outputs folder (file locked)", err=True)
 
     # ============================
     # Step 1: Run generate command

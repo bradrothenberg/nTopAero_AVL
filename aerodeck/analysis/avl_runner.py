@@ -34,6 +34,28 @@ class RunCase:
 
 
 @dataclass
+class StripForce:
+    """Strip force data at a single spanwise station."""
+
+    surface: str  # Surface name (e.g., "Wing", "Tail")
+    j: int  # Strip index
+    Xle: float  # X position of strip leading edge [length units]
+    Yle: float  # Spanwise (Y) position of strip leading edge [length units]
+    Zle: float  # Z position of strip leading edge [length units]
+    chord: float  # Local chord [length units]
+    area: float  # Strip area [length^2]
+    c_cl: float  # Chord * section Cl (cl*c)
+    ai: float  # Induced angle [deg]
+    cl_norm: float  # Normalized section Cl
+    cl: float  # Section lift coefficient
+    cd: float  # Section drag coefficient (induced)
+    cdv: float  # Section viscous drag coefficient
+    cm_c4: float  # Section pitching moment about c/4
+    cm_le: float  # Section pitching moment about LE
+    cp_xc: float  # Center of pressure location as x/c fraction
+
+
+@dataclass
 class AVLResults:
     """Results from AVL analysis."""
 
@@ -61,6 +83,10 @@ class AVLResults:
     CL_de: Optional[float] = None  # Elevon
     Cm_de: Optional[float] = None
 
+    # Hinge moment coefficients (from AVL HM command)
+    Ch_elevon: Optional[float] = None  # Elevon hinge moment coefficient
+    Ch_aileron: Optional[float] = None  # Aileron hinge moment coefficient
+
     # Dynamic derivatives - pitch rate
     CL_q: Optional[float] = None
     Cm_q: Optional[float] = None
@@ -77,6 +103,9 @@ class AVLResults:
 
     # Neutral point (directly from AVL)
     Xnp: Optional[float] = None
+
+    # Strip forces (from AVL FS command)
+    strip_forces: Optional[list[StripForce]] = None
 
     converged: bool = True
     case: Optional[RunCase] = None
@@ -278,6 +307,16 @@ class AVLAnalysis:
             f.write("ST\n")
             f.write(f"{stab_file}\n")  # Filename to write to
 
+            # Request hinge moments - write to file
+            hm_file = f"{case.name}_hm.txt"
+            f.write("HM\n")
+            f.write(f"{hm_file}\n")  # Filename to write to
+
+            # Request strip forces - write to file
+            fs_file = f"{case.name}_fs.txt"
+            f.write("FS\n")
+            f.write(f"{fs_file}\n")  # Filename to write to
+
             # Note: For Trefftz plots, we'll use the FT file which contains Trefftz data
 
             # Exit OPER menu
@@ -415,6 +454,19 @@ class AVLAnalysis:
                 result.Cm = ft_data.get('Cm', result.Cm)
                 result.Cn = ft_data.get('Cn', result.Cn)
                 result.Cl = ft_data.get('Cl', result.Cl)
+
+        # Parse hinge moments from HM file
+        hm_file = output_dir / f"{case_name}_hm.txt"
+        hm_data = self._parse_hm_file(hm_file)
+        if hm_data:
+            result.Ch_elevon = hm_data.get('Ch_elevon')
+            result.Ch_aileron = hm_data.get('Ch_aileron')
+
+        # Parse strip forces from FS file
+        fs_file = output_dir / f"{case_name}_fs.txt"
+        strip_forces = self._parse_fs_file(fs_file)
+        if strip_forces:
+            result.strip_forces = strip_forces
 
         return result
 
@@ -644,6 +696,139 @@ class AVLAnalysis:
                 forces[key] = float(match.group(1))
 
         return forces
+
+    def _parse_hm_file(self, hm_file: Path) -> dict:
+        """
+        Parse AVL hinge moments file (HM output).
+
+        Args:
+            hm_file: Path to HM file
+
+        Returns:
+            Dictionary with Ch_elevon, Ch_aileron (hinge moment coefficients)
+        """
+        hinge_moments = {}
+
+        if not hm_file.exists():
+            return hinge_moments
+
+        try:
+            with open(hm_file, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+
+            # Parse hinge moment coefficients from HM output
+            # Format: " elevon           -0.6549E-03      10.00         -0.000"
+            # Control          Chinge      Deflection   Moment(N-m)
+            import re
+
+            # Match lines like: elevon           -0.6549E-03      10.00         -0.000
+            for line in content.split('\n'):
+                line = line.strip()
+                if line.startswith('elevon'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        try:
+                            hinge_moments['Ch_elevon'] = float(parts[1])
+                        except ValueError:
+                            pass
+                elif line.startswith('aileron'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        try:
+                            hinge_moments['Ch_aileron'] = float(parts[1])
+                        except ValueError:
+                            pass
+
+        except Exception as e:
+            self.logger.debug(f"Error parsing HM file: {e}")
+
+        return hinge_moments
+
+    def _parse_fs_file(self, fs_file: Path) -> list[StripForce]:
+        """
+        Parse AVL strip forces file (FS output).
+
+        AVL FS output format:
+         Surface # 1     Main Wing
+             # Chordwise = 12   # Spanwise = 27     First strip =  1
+             Surface area Ssurf =  108.188202     Ave. chord Cave =   12.048802
+
+         j     Xle      Yle      Zle      Chord    Area     c_cl     ai     cl_norm    cl       cd       cdv    cm_c/4     cm_LE   C.P.x/c
+
+        Args:
+            fs_file: Path to FS file
+
+        Returns:
+            List of StripForce objects
+        """
+        strip_forces = []
+
+        if not fs_file.exists():
+            return strip_forces
+
+        try:
+            with open(fs_file, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+
+            current_surface = ""
+            in_data_section = False
+
+            for line in lines:
+                line_stripped = line.strip()
+
+                # Detect surface name (e.g., "Surface # 1     Main Wing")
+                if line_stripped.startswith('Surface #'):
+                    parts = line_stripped.split()
+                    # Find surface name after the number (everything after index 3)
+                    if len(parts) >= 4:
+                        current_surface = ' '.join(parts[3:])
+                    in_data_section = False
+                    continue
+
+                # Detect header line (starts with "j")
+                if line_stripped.startswith('j ') and 'Xle' in line_stripped:
+                    in_data_section = True
+                    continue
+
+                # Skip empty lines
+                if not line_stripped:
+                    in_data_section = False
+                    continue
+
+                # Parse data lines (strip index is a number)
+                if in_data_section and line_stripped and line_stripped[0].isdigit():
+                    parts = line_stripped.split()
+                    # AVL format: j Xle Yle Zle Chord Area c_cl ai cl_norm cl cd cdv cm_c/4 cm_LE C.P.x/c
+                    # Index:      0  1   2   3    4    5    6    7    8     9  10 11   12     13    14
+                    if len(parts) >= 15:
+                        try:
+                            strip = StripForce(
+                                surface=current_surface,
+                                j=int(parts[0]),
+                                Xle=float(parts[1]),
+                                Yle=float(parts[2]),
+                                Zle=float(parts[3]),
+                                chord=float(parts[4]),
+                                area=float(parts[5]),
+                                c_cl=float(parts[6]),
+                                ai=float(parts[7]),
+                                cl_norm=float(parts[8]),
+                                cl=float(parts[9]),
+                                cd=float(parts[10]),
+                                cdv=float(parts[11]),
+                                cm_c4=float(parts[12]),
+                                cm_le=float(parts[13]),
+                                cp_xc=float(parts[14])
+                            )
+                            strip_forces.append(strip)
+                        except (ValueError, IndexError) as e:
+                            self.logger.debug(f"Error parsing strip force line: {e}")
+                            pass
+
+        except Exception as e:
+            self.logger.debug(f"Error parsing FS file: {e}")
+
+        return strip_forces
 
     def _parse_stab_file_to_results(self, stab_file: Path) -> AVLResults:
         """
