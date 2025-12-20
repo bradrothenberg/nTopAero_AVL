@@ -7,6 +7,7 @@ Units: US Customary (feet, lbm)
 """
 
 import subprocess
+import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -267,12 +268,15 @@ class XFOILRunner:
 
             # Run XFOIL
             try:
+                env = os.environ.copy()
+                env["DISPLAY"] = ":99"
                 result = subprocess.run(
                     [self.xfoil_path],
                     input=commands,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
+                    env=env
                 )
 
                 if result.returncode != 0:
@@ -337,12 +341,15 @@ class XFOILRunner:
 
             # Run XFOIL
             try:
+                env = os.environ.copy()
+                env["DISPLAY"] = ":99"
                 result = subprocess.run(
                     [self.xfoil_path],
                     input=commands,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
+                    env=env
                 )
 
                 if result.returncode != 0:
@@ -553,3 +560,45 @@ class XFOILRunner:
             self.logger.debug(f"Saved: {filename}")
 
         self.logger.success(f"Saved {len(polars.polars)} polar files")
+    def load_polars(
+        self,
+        polar_dir: Path
+    ) -> AirfoilPolars:
+        """
+        Load polar data from CSV files.
+
+        Args:
+            polar_dir: Directory containing polar CSV files
+
+        Returns:
+            AirfoilPolars loaded from files
+        """
+        import re as regex
+        polar_dir = Path(polar_dir)
+        polars = []
+        
+        for csv_file in sorted(polar_dir.glob("polar_*.csv")):
+            # Parse Reynolds and Mach from filename: polar_re5.00e+05_m0.10.csv
+            match = regex.match(r"polar_re([\d.e+]+)_m([\d.]+)\.csv", csv_file.name)
+            if match:
+                reynolds = float(match.group(1))
+                mach = float(match.group(2))
+                
+                df = pd.read_csv(csv_file)
+                
+                polar = PolarData(
+                    reynolds=reynolds,
+                    mach=mach,
+                    alpha=df["alpha"].values,
+                    cl=df["CL"].values,
+                    cd=df["CD"].values,
+                    cm=df["CM"].values
+                )
+                polars.append(polar)
+                self.logger.debug(f"Loaded: {csv_file.name}")
+        
+        if not polars:
+            raise ValueError(f"No polar files found in {polar_dir}")
+        
+        return AirfoilPolars(airfoil_name="cached", polars=polars)
+

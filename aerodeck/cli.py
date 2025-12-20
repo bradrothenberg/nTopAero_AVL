@@ -297,44 +297,58 @@ def generate(
         # Also include lower Re for stall/low-speed analysis
         reynolds_numbers = [5e5, 1e6, 3e6, 5e6, 7e6]
 
-        # Check for custom airfoil file in input directory
-        airfoil_files = list(input_dir.glob("*.dat"))
+        # Check for existing polars in output directory
+        polar_dir = output_dir / "polars"
+        existing_polars = list(polar_dir.glob("polar_*.csv")) if polar_dir.exists() else []
+        
+        if len(existing_polars) >= len(reynolds_numbers):
+            # Load existing polars instead of regenerating
+            logger.info(f"Found {len(existing_polars)} existing polar files in {polar_dir}")
+            logger.info("Skipping XFOIL polar generation (using cached polars)")
+            try:
+                airfoil_polars = xfoil_runner.load_polars(polar_dir)
+                logger.success(f"Loaded {len(airfoil_polars.polars)} cached airfoil polars")
+            except Exception as e:
+                logger.warning(f"Failed to load cached polars: {e}")
+                airfoil_polars = None
+        else:
+            # Check for custom airfoil file in input directory
+            airfoil_files = list(input_dir.glob("*.dat"))
 
-        try:
-            if airfoil_files:
-                # Use first .dat file found
-                airfoil_file = airfoil_files[0]
-                logger.info(f"Using custom airfoil: {airfoil_file.name}")
-                airfoil_polars = xfoil_runner.generate_airfoil_polar(
-                    airfoil_file=str(airfoil_file),
-                    reynolds_numbers=reynolds_numbers,
-                    alpha_range=(-5.0, 15.0),
-                    alpha_step=1.0,
-                    mach=mach,
-                    n_iter=150
-                )
-            else:
-                # Fallback to NACA 0012
-                naca_code = "0012"
-                logger.info(f"No custom airfoil found, using NACA {naca_code}")
-                airfoil_polars = xfoil_runner.generate_naca_polar(
-                    naca_code=naca_code,
-                    reynolds_numbers=reynolds_numbers,
-                    alpha_range=(-5.0, 15.0),
-                    alpha_step=1.0,
-                    mach=mach,
-                    n_iter=150
-                )
+            try:
+                if airfoil_files:
+                    # Use first .dat file found
+                    airfoil_file = airfoil_files[0]
+                    logger.info(f"Using custom airfoil: {airfoil_file.name}")
+                    airfoil_polars = xfoil_runner.generate_airfoil_polar(
+                        airfoil_file=str(airfoil_file),
+                        reynolds_numbers=reynolds_numbers,
+                        alpha_range=(-5.0, 15.0),
+                        alpha_step=1.0,
+                        mach=mach,
+                        n_iter=150
+                    )
+                else:
+                    # Fallback to NACA 0012
+                    naca_code = "0012"
+                    logger.info(f"No custom airfoil found, using NACA {naca_code}")
+                    airfoil_polars = xfoil_runner.generate_naca_polar(
+                        naca_code=naca_code,
+                        reynolds_numbers=reynolds_numbers,
+                        alpha_range=(-5.0, 15.0),
+                        alpha_step=1.0,
+                        mach=mach,
+                        n_iter=150
+                    )
 
-            # Save polars to CSV
-            polar_dir = output_dir / "polars"
-            xfoil_runner.save_polars(airfoil_polars, polar_dir)
+                # Save polars to CSV
+                xfoil_runner.save_polars(airfoil_polars, polar_dir)
 
-            logger.success(f"Generated {len(airfoil_polars.polars)} airfoil polars")
-        except Exception as e:
-            logger.warning(f"XFOIL polar generation failed: {e}")
-            logger.warning("Continuing with AVL-only aerodeck")
-            airfoil_polars = None
+                logger.success(f"Generated {len(airfoil_polars.polars)} airfoil polars")
+            except Exception as e:
+                logger.warning(f"XFOIL polar generation failed: {e}")
+                logger.warning("Continuing with AVL-only aerodeck")
+                airfoil_polars = None
 
         # Phase 5: Generate AeroDeck
         logger.section("Phase 5: AeroDeck Generation")
