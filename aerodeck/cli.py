@@ -717,6 +717,10 @@ def html(
 
         click.echo(f"[OK] HTML viewer generated: {html_path}")
 
+        # Also generate metrics JSON file
+        metrics_path = viewer.generate_metrics_json()
+        click.echo(f"[OK] Metrics JSON generated: {metrics_path}")
+
         if not no_browser:
             click.echo(f"[OK] Opening in browser...")
 

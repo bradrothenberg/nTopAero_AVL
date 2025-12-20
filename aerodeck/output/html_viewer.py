@@ -46,6 +46,189 @@ class HTMLViewer:
 
         return output_path
 
+    def generate_metrics_json(self, output_path: Path = None) -> Path:
+        """
+        Generate a JSON file with all key metrics from the aerodeck.
+
+        Args:
+            output_path: Path to save JSON file (default: {aerodeck}_metrics.json)
+
+        Returns:
+            Path to generated JSON file
+        """
+        if output_path is None:
+            output_path = self.aerodeck_path.with_name(
+                self.aerodeck_path.stem + '_metrics.json'
+            )
+
+        metrics = self._extract_metrics()
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, indent=2)
+
+        return output_path
+
+    def _extract_metrics(self) -> Dict[str, Any]:
+        """Extract all key metrics from aerodeck data."""
+        metadata = self.data.get('metadata', {})
+        reference = self.data.get('reference_geometry', {})
+        mass = self.data.get('mass_properties', {})
+
+        # Handle nested aerodynamics structure
+        aero = self.data.get('aerodynamics', {})
+        static_stab = aero.get('static_stability', {})
+        dynamic_stab = aero.get('dynamic_stability', {})
+        control = aero.get('control_effectiveness', {})
+
+        # Extract reference geometry
+        S_ref_ft2 = reference.get('S_ref_ft2', reference.get('S_ref', 0))
+        b_ref_ft = reference.get('b_ref_ft', reference.get('b_ref', 0))
+        c_ref_ft = reference.get('c_ref_ft', reference.get('c_ref', 0))
+        x_ref_ft = reference.get('x_ref_ft', 0)
+        y_ref_ft = reference.get('y_ref_ft', 0)
+        z_ref_ft = reference.get('z_ref_ft', 0)
+
+        # Calculate derived values
+        aspect_ratio = (b_ref_ft ** 2 / S_ref_ft2) if S_ref_ft2 > 0 else 0
+        mass_lbm = mass.get('mass_lbm', 0)
+        wing_loading = mass_lbm / S_ref_ft2 if S_ref_ft2 > 0 else 0
+
+        # Extract CG
+        cg = mass.get('cg_ft', [0, 0, 0])
+
+        # Extract inertia
+        inertia = mass.get('inertia_lbm_ft2', {})
+
+        # Extract stability derivatives
+        longitudinal = static_stab.get('longitudinal', {})
+        lateral_directional = static_stab.get('lateral_directional', {})
+        pitch_rate = dynamic_stab.get('pitch_rate', {})
+        roll_rate = dynamic_stab.get('roll_rate', {})
+        yaw_rate = dynamic_stab.get('yaw_rate', {})
+
+        CL_alpha = longitudinal.get('CL_alpha_per_rad', 0)
+        Cm_alpha = longitudinal.get('Cm_alpha_per_rad', 0)
+        neutral_point_x_ft = longitudinal.get('neutral_point_x_ft', None)
+        Cn_beta = lateral_directional.get('Cn_beta_per_rad', 0)
+        Cl_beta = lateral_directional.get('Cl_beta_per_rad', 0)
+        CY_beta = lateral_directional.get('CY_beta_per_rad', 0)
+
+        CL_q = pitch_rate.get('CL_q_per_rad', 0)
+        Cm_q = pitch_rate.get('Cm_q_per_rad', 0)
+        Cl_p = roll_rate.get('Cl_p_per_rad', 0)
+        Cn_p = roll_rate.get('Cn_p_per_rad', 0)
+        Cl_r = yaw_rate.get('Cl_r_per_rad', 0)
+        Cn_r = yaw_rate.get('Cn_r_per_rad', 0)
+
+        # Calculate static margin
+        static_margin_pct = None
+        if neutral_point_x_ft is not None and c_ref_ft > 0:
+            static_margin_pct = ((neutral_point_x_ft - cg[0]) / c_ref_ft) * 100
+
+        # Extract control derivatives
+        elevon = control.get('elevon', {})
+        aileron = control.get('aileron', {})
+
+        # Stability assessment
+        is_pitch_stable = Cm_alpha < 0
+        is_yaw_stable = Cn_beta > 0
+        is_pitch_damped = Cm_q < 0
+        is_roll_damped = Cl_p < 0
+        is_yaw_damped = Cn_r < 0
+
+        # Build metrics dictionary
+        metrics = {
+            "metadata": {
+                "aircraft_name": metadata.get('aircraft_name', 'Unknown'),
+                "generator_version": metadata.get('generator_version', metadata.get('version', 'Unknown')),
+                "generated_date": metadata.get('generated', datetime.now().isoformat()),
+                "metrics_generated": datetime.now().isoformat()
+            },
+            "reference_geometry": {
+                "S_ref_ft2": round(S_ref_ft2, 4),
+                "b_ref_ft": round(b_ref_ft, 4),
+                "c_ref_ft": round(c_ref_ft, 4),
+                "x_ref_ft": round(x_ref_ft, 4),
+                "y_ref_ft": round(y_ref_ft, 4),
+                "z_ref_ft": round(z_ref_ft, 4),
+                "aspect_ratio": round(aspect_ratio, 3)
+            },
+            "mass_properties": {
+                "mass_lbm": round(mass_lbm, 2),
+                "wing_loading_lbm_per_ft2": round(wing_loading, 2),
+                "cg_ft": {
+                    "x": round(cg[0], 4) if len(cg) > 0 else 0,
+                    "y": round(cg[1], 4) if len(cg) > 1 else 0,
+                    "z": round(cg[2], 4) if len(cg) > 2 else 0
+                },
+                "inertia_lbm_ft2": {
+                    "Ixx": round(inertia.get('Ixx', 0), 2),
+                    "Iyy": round(inertia.get('Iyy', 0), 2),
+                    "Izz": round(inertia.get('Izz', 0), 2),
+                    "Ixy": round(inertia.get('Ixy', 0), 2),
+                    "Ixz": round(inertia.get('Ixz', 0), 2),
+                    "Iyz": round(inertia.get('Iyz', 0), 2)
+                },
+                "fuel_mass_lbm": round(mass.get('fuel_mass_lbm', 0), 2)
+            },
+            "static_stability": {
+                "longitudinal": {
+                    "CL_alpha_per_rad": round(CL_alpha, 4),
+                    "CL_alpha_per_deg": round(CL_alpha * np.pi / 180, 6),
+                    "Cm_alpha_per_rad": round(Cm_alpha, 4),
+                    "Cm_alpha_per_deg": round(Cm_alpha * np.pi / 180, 6),
+                    "neutral_point_x_ft": round(neutral_point_x_ft, 4) if neutral_point_x_ft else None,
+                    "static_margin_percent": round(static_margin_pct, 2) if static_margin_pct else None,
+                    "is_stable": is_pitch_stable
+                },
+                "lateral_directional": {
+                    "Cn_beta_per_rad": round(Cn_beta, 4),
+                    "Cl_beta_per_rad": round(Cl_beta, 4),
+                    "CY_beta_per_rad": round(CY_beta, 4),
+                    "is_directionally_stable": is_yaw_stable
+                }
+            },
+            "dynamic_stability": {
+                "pitch_rate": {
+                    "CL_q_per_rad": round(CL_q, 4),
+                    "Cm_q_per_rad": round(Cm_q, 4),
+                    "is_damped": is_pitch_damped
+                },
+                "roll_rate": {
+                    "Cl_p_per_rad": round(Cl_p, 4),
+                    "Cn_p_per_rad": round(Cn_p, 4),
+                    "is_damped": is_roll_damped
+                },
+                "yaw_rate": {
+                    "Cl_r_per_rad": round(Cl_r, 4),
+                    "Cn_r_per_rad": round(Cn_r, 4),
+                    "is_damped": is_yaw_damped
+                }
+            },
+            "control_effectiveness": {
+                "elevon": {
+                    "CL_de_per_deg": round(elevon.get('CL_de_per_deg', 0), 6),
+                    "Cm_de_per_deg": round(elevon.get('Cm_de_per_deg', 0), 6),
+                    "Ch_de": round(elevon.get('Ch_de', 0), 6)
+                },
+                "aileron": {
+                    "Cl_da_per_deg": round(aileron.get('Cl_da_per_deg', 0), 6),
+                    "Cn_da_per_deg": round(aileron.get('Cn_da_per_deg', 0), 6),
+                    "Ch_da": round(aileron.get('Ch_da', 0), 6)
+                }
+            },
+            "stability_summary": {
+                "pitch_stable": is_pitch_stable,
+                "directionally_stable": is_yaw_stable,
+                "pitch_damped": is_pitch_damped,
+                "roll_damped": is_roll_damped,
+                "yaw_damped": is_yaw_damped,
+                "overall_stable": is_pitch_stable and is_yaw_stable and is_pitch_damped and is_roll_damped and is_yaw_damped
+            }
+        }
+
+        return metrics
+
     def _load_avl_polar_data(self) -> Dict[str, Any]:
         """
         Load AVL 3D aircraft polar data from results directory.
