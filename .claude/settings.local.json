@@ -34,7 +34,8 @@
       "Bash(gh pr create:*)",
       "Bash(python -m aerodeck:*)",
       "Bash(pip install:*)",
-      "Bash(aerodeck --help:*)"
+      "Bash(aerodeck --help:*)",
+      "Bash(aerodeck build:*)"
     ],
     "deny": [],
     "ask": []
