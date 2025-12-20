@@ -78,7 +78,7 @@ class HTMLViewer:
         aero = self.data.get('aerodynamics', {})
         static_stab = aero.get('static_stability', {})
         dynamic_stab = aero.get('dynamic_stability', {})
-        control = aero.get('control_effectiveness', {})
+        control_surfaces = aero.get('control_surfaces', [])
 
         # Extract reference geometry
         S_ref_ft2 = reference.get('S_ref_ft2', reference.get('S_ref', 0))
@@ -99,6 +99,11 @@ class HTMLViewer:
         # Extract inertia
         inertia = mass.get('inertia_lbm_ft2', {})
 
+        # Extract fuel mass and calculate fuel fraction
+        fuel_mass_lbm = mass.get('fuel_mass_lbm', 0)
+        fuel_fraction = fuel_mass_lbm / mass_lbm if mass_lbm > 0 else 0
+        empty_weight_lbm = mass_lbm - fuel_mass_lbm if fuel_mass_lbm > 0 else mass_lbm
+
         # Extract stability derivatives
         longitudinal = static_stab.get('longitudinal', {})
         lateral_directional = static_stab.get('lateral_directional', {})
@@ -108,6 +113,8 @@ class HTMLViewer:
 
         CL_alpha = longitudinal.get('CL_alpha_per_rad', 0)
         Cm_alpha = longitudinal.get('Cm_alpha_per_rad', 0)
+        CL_0 = longitudinal.get('CL_0', 0)
+        CD_0 = longitudinal.get('CD_0', 0)
         neutral_point_x_ft = longitudinal.get('neutral_point_x_ft', None)
         Cn_beta = lateral_directional.get('Cn_beta_per_rad', 0)
         Cl_beta = lateral_directional.get('Cl_beta_per_rad', 0)
@@ -125,9 +132,184 @@ class HTMLViewer:
         if neutral_point_x_ft is not None and c_ref_ft > 0:
             static_margin_pct = ((neutral_point_x_ft - cg[0]) / c_ref_ft) * 100
 
-        # Extract control derivatives
-        elevon = control.get('elevon', {})
-        aileron = control.get('aileron', {})
+        # Extract control surface data
+        elevon_data = {}
+        aileron_data = {}
+        for cs in control_surfaces:
+            if cs.get('name') == 'Elevon':
+                eff = cs.get('effectiveness', {})
+                elevon_data = {
+                    "CL_de_per_rad": eff.get('CL_delta_per_rad', 0),
+                    "CL_de_per_deg": eff.get('CL_delta_per_rad', 0) * np.pi / 180,
+                    "Cm_de_per_rad": eff.get('Cm_delta_per_rad', 0),
+                    "Cm_de_per_deg": eff.get('Cm_delta_per_rad', 0) * np.pi / 180,
+                    "Ch_de": eff.get('Ch_delta', 0),
+                    "limits_deg": cs.get('limits_deg', {"min": -30, "max": 30})
+                }
+            elif cs.get('name') == 'Aileron':
+                eff = cs.get('effectiveness', {})
+                aileron_data = {
+                    "Cl_da_per_rad": eff.get('Cl_delta_per_rad', 0),
+                    "Cl_da_per_deg": eff.get('Cl_delta_per_rad', 0) * np.pi / 180,
+                    "Cn_da_per_rad": eff.get('Cn_delta_per_rad', 0),
+                    "Cn_da_per_deg": eff.get('Cn_delta_per_rad', 0) * np.pi / 180,
+                    "Ch_da": eff.get('Ch_delta', 0),
+                    "limits_deg": cs.get('limits_deg', {"min": -30, "max": 30})
+                }
+
+        # Calculate L/D from AVL polar data
+        LD_max = None
+        alpha_at_LD_max = None
+        avl_polar = self._load_avl_polar_data()
+        if avl_polar:
+            alphas = avl_polar.get('alpha', [])
+            CLs = avl_polar.get('CL', [])
+            CD_inds = avl_polar.get('CD_induced', [])
+
+            # Get airfoil polar for profile drag
+            polars_data = self.data.get('airfoil_polars', {})
+            polars_list = polars_data.get('polars', [])
+
+            # Use highest Reynolds number polar for profile drag (last in list)
+            if polars_list:
+                best_polar = polars_list[-1]  # Match JavaScript which uses last polar
+                polar_CLs = best_polar.get('CL', [])
+                polar_CDs = best_polar.get('CD', [])
+
+                # Calculate L/D at each AVL alpha point
+                # Interpolate XFOIL profile drag at AVL CL values (same as JavaScript)
+                ld_values = []
+                for i, alpha in enumerate(alphas):
+                    if i < len(CLs) and i < len(CD_inds):
+                        CL = CLs[i]
+                        CD_ind = CD_inds[i]
+
+                        # Interpolate profile drag from airfoil polar at this CL
+                        CD_profile = np.interp(CL, polar_CLs, polar_CDs) if polar_CLs else 0.01
+                        CD_total = CD_profile + CD_ind
+
+                        if CD_total > 0.001:
+                            LD = CL / CD_total
+                            ld_values.append((alpha, CL, CD_total, LD))
+
+                if ld_values:
+                    # Find max L/D
+                    max_ld_point = max(ld_values, key=lambda x: x[3])
+                    alpha_at_LD_max = max_ld_point[0]
+                    LD_max = max_ld_point[3]
+
+        # Calculate elevon forces at reference condition (200 mph, 10° deflection)
+        elevon_forces = {}
+        if elevon_data and S_ref_ft2 > 0 and c_ref_ft > 0:
+            # Reference conditions
+            V_mph = 200
+            V_fps = V_mph * 5280 / 3600  # ft/s
+            rho_slug_ft3 = 0.002377  # sea level density
+            q_psf = 0.5 * rho_slug_ft3 * V_fps ** 2  # dynamic pressure lb/ft²
+
+            delta_e_deg = 10  # Reference deflection
+            Ch_elevon = elevon_data.get('Ch_de', 0)
+            Cm_de = elevon_data.get('Cm_de_per_rad', 0)
+
+            # Hinge moment: HM = Ch * q * S_ref * c_ref
+            hinge_moment_lbft = abs(Ch_elevon * q_psf * S_ref_ft2 * c_ref_ft * delta_e_deg / 10)
+            hinge_moment_lbin = hinge_moment_lbft * 12
+
+            # Pitching moment contribution
+            delta_Cm = Cm_de * (delta_e_deg * np.pi / 180)
+            pitch_moment_lbft = delta_Cm * q_psf * S_ref_ft2 * c_ref_ft
+
+            elevon_forces = {
+                "reference_velocity_mph": V_mph,
+                "reference_deflection_deg": delta_e_deg,
+                "dynamic_pressure_psf": round(q_psf, 2),
+                "hinge_moment_lb_in": round(hinge_moment_lbin, 1),
+                "hinge_moment_Nm": round(hinge_moment_lbin * 0.113, 1),
+                "pitch_moment_lb_ft": round(pitch_moment_lbft, 1)
+            }
+
+        # Calculate range estimate using Raymer mission profile method
+        # (matches the HTML report calculation exactly)
+        range_metrics = {}
+        if fuel_mass_lbm > 0 and LD_max and LD_max > 0:
+            # Propeller aircraft assumptions (same as HTML report)
+            eta_prop = 0.80  # Propeller efficiency
+            SFC_lb_hp_hr = 0.45  # Specific fuel consumption
+            V_cruise_kts = 175  # Cruise speed
+            loiter_time_hr = 12.0  # Loiter endurance requirement
+            LD_loiter = LD_max * 0.9  # L/D at loiter speed
+
+            # Mission segment fuel fractions (Raymer method)
+            ff_warmup_taxi = 0.970
+            ff_takeoff = 0.985
+            ff_climb = 0.980
+            ff_descent = 0.990
+            ff_landing = 0.995
+
+            # Reserve fuel (6% for 45 min reserve)
+            reserve_fraction = 0.06
+
+            W0 = mass_lbm  # MTOW
+            W_empty = mass_lbm - fuel_mass_lbm
+
+            # Calculate loiter fuel fraction for given time
+            V_loiter_kts = V_cruise_kts * 0.7
+            exponent = -loiter_time_hr * SFC_lb_hp_hr * V_loiter_kts / (eta_prop * LD_loiter * 325.87)
+            ff_loiter = np.exp(exponent)
+
+            # Weight at start of cruise (after warmup, takeoff, climb)
+            W_after_warmup = W0 * ff_warmup_taxi
+            W_after_takeoff = W_after_warmup * ff_takeoff
+            W_start_cruise = W_after_takeoff * ff_climb
+
+            # Work backwards from end of mission
+            reserve_fuel = fuel_mass_lbm * reserve_fraction
+            W_end_mission = W_empty + reserve_fuel
+            W_after_descent = W_end_mission / ff_landing
+            W_after_loiter = W_after_descent / ff_descent
+            W_after_cruise = W_after_loiter / ff_loiter
+
+            # Calculate cruise fuel fraction
+            ff_cruise = W_after_cruise / W_start_cruise if W_start_cruise > 0 else 1.0
+
+            # Calculate cruise range using Breguet
+            if W_after_cruise > 0 and W_start_cruise > W_after_cruise:
+                range_nm = (eta_prop / SFC_lb_hp_hr) * LD_max * np.log(W_start_cruise / W_after_cruise) * 325.87
+                cruise_time_hr = range_nm / V_cruise_kts
+                total_endurance_hr = cruise_time_hr + loiter_time_hr + 0.25  # +15 min for other segments
+
+                # Calculate fuel burned at each segment
+                fuel_warmup = W0 - W_after_warmup
+                fuel_takeoff = W_after_warmup - W_after_takeoff
+                fuel_climb = W_after_takeoff - W_start_cruise
+                fuel_cruise = W_start_cruise - W_after_cruise
+                fuel_loiter = W_after_cruise - W_after_loiter
+                fuel_descent = W_after_loiter - W_after_descent
+                fuel_landing = W_after_descent - W_end_mission
+
+                range_metrics = {
+                    "cruise_speed_kts": V_cruise_kts,
+                    "propeller_efficiency": eta_prop,
+                    "SFC_lb_hp_hr": SFC_lb_hp_hr,
+                    "max_LD": round(LD_max, 1),
+                    "range_nm": round(range_nm, 0),
+                    "cruise_time_hr": round(cruise_time_hr, 1),
+                    "loiter_time_hr": loiter_time_hr,
+                    "total_endurance_hr": round(total_endurance_hr, 1),
+                    "mission_segments": [
+                        {"segment": "1. Warmup & Taxi", "W_start_lb": round(W0, 1), "W_end_lb": round(W_after_warmup, 1), "fuel_lb": round(fuel_warmup, 1), "fuel_fraction": round(ff_warmup_taxi, 3)},
+                        {"segment": "2. Takeoff", "W_start_lb": round(W_after_warmup, 1), "W_end_lb": round(W_after_takeoff, 1), "fuel_lb": round(fuel_takeoff, 1), "fuel_fraction": round(ff_takeoff, 3)},
+                        {"segment": "3. Climb", "W_start_lb": round(W_after_takeoff, 1), "W_end_lb": round(W_start_cruise, 1), "fuel_lb": round(fuel_climb, 1), "fuel_fraction": round(ff_climb, 3)},
+                        {"segment": "4. Cruise", "W_start_lb": round(W_start_cruise, 1), "W_end_lb": round(W_after_cruise, 1), "fuel_lb": round(fuel_cruise, 1), "fuel_fraction": round(ff_cruise, 3)},
+                        {"segment": f"5. Loiter ({loiter_time_hr:.0f} hr)", "W_start_lb": round(W_after_cruise, 1), "W_end_lb": round(W_after_loiter, 1), "fuel_lb": round(fuel_loiter, 1), "fuel_fraction": round(ff_loiter, 3)},
+                        {"segment": "6. Descent", "W_start_lb": round(W_after_loiter, 1), "W_end_lb": round(W_after_descent, 1), "fuel_lb": round(fuel_descent, 1), "fuel_fraction": round(ff_descent, 3)},
+                        {"segment": "7. Landing & Taxi", "W_start_lb": round(W_after_descent, 1), "W_end_lb": round(W_end_mission, 1), "fuel_lb": round(fuel_landing, 1), "fuel_fraction": round(ff_landing, 3)},
+                    ],
+                    "reserve_fuel_lb": round(reserve_fuel, 1),
+                    "total_fuel_lb": round(fuel_mass_lbm, 1),
+                    "empty_weight_lb": round(W_empty, 1),
+                    "MTOW_lb": round(W0, 1)
+                }
 
         # Stability assessment
         is_pitch_stable = Cm_alpha < 0
@@ -169,7 +351,16 @@ class HTMLViewer:
                     "Ixz": round(inertia.get('Ixz', 0), 2),
                     "Iyz": round(inertia.get('Iyz', 0), 2)
                 },
-                "fuel_mass_lbm": round(mass.get('fuel_mass_lbm', 0), 2)
+                "fuel_mass_lbm": round(fuel_mass_lbm, 2),
+                "fuel_fraction": round(fuel_fraction, 3),
+                "empty_weight_lbm": round(empty_weight_lbm, 2)
+            },
+            "aerodynamic_performance": {
+                "CL_0": round(CL_0, 4),
+                "CD_0": round(CD_0, 4),
+                "LD_max": round(LD_max, 2) if LD_max else None,
+                "alpha_at_LD_max_deg": round(alpha_at_LD_max, 1) if alpha_at_LD_max else None,
+                "oswald_efficiency_estimate": round(1 / (np.pi * aspect_ratio * CD_0 / (CL_0**2 if CL_0 != 0 else 1)), 2) if CD_0 > 0 else None
             },
             "static_stability": {
                 "longitudinal": {
@@ -178,7 +369,7 @@ class HTMLViewer:
                     "Cm_alpha_per_rad": round(Cm_alpha, 4),
                     "Cm_alpha_per_deg": round(Cm_alpha * np.pi / 180, 6),
                     "neutral_point_x_ft": round(neutral_point_x_ft, 4) if neutral_point_x_ft else None,
-                    "static_margin_percent": round(static_margin_pct, 2) if static_margin_pct else None,
+                    "static_margin_percent": round(static_margin_pct, 2) if static_margin_pct is not None else None,
                     "is_stable": is_pitch_stable
                 },
                 "lateral_directional": {
@@ -207,16 +398,24 @@ class HTMLViewer:
             },
             "control_effectiveness": {
                 "elevon": {
-                    "CL_de_per_deg": round(elevon.get('CL_de_per_deg', 0), 6),
-                    "Cm_de_per_deg": round(elevon.get('Cm_de_per_deg', 0), 6),
-                    "Ch_de": round(elevon.get('Ch_de', 0), 6)
+                    "CL_de_per_rad": round(elevon_data.get('CL_de_per_rad', 0), 6),
+                    "CL_de_per_deg": round(elevon_data.get('CL_de_per_deg', 0), 6),
+                    "Cm_de_per_rad": round(elevon_data.get('Cm_de_per_rad', 0), 6),
+                    "Cm_de_per_deg": round(elevon_data.get('Cm_de_per_deg', 0), 6),
+                    "Ch_de": round(elevon_data.get('Ch_de', 0), 6),
+                    "limits_deg": elevon_data.get('limits_deg', {"min": -30, "max": 30})
                 },
                 "aileron": {
-                    "Cl_da_per_deg": round(aileron.get('Cl_da_per_deg', 0), 6),
-                    "Cn_da_per_deg": round(aileron.get('Cn_da_per_deg', 0), 6),
-                    "Ch_da": round(aileron.get('Ch_da', 0), 6)
+                    "Cl_da_per_rad": round(aileron_data.get('Cl_da_per_rad', 0), 6),
+                    "Cl_da_per_deg": round(aileron_data.get('Cl_da_per_deg', 0), 6),
+                    "Cn_da_per_rad": round(aileron_data.get('Cn_da_per_rad', 0), 6),
+                    "Cn_da_per_deg": round(aileron_data.get('Cn_da_per_deg', 0), 6),
+                    "Ch_da": round(aileron_data.get('Ch_da', 0), 6),
+                    "limits_deg": aileron_data.get('limits_deg', {"min": -30, "max": 30})
                 }
             },
+            "elevon_forces": elevon_forces,
+            "range_mission": range_metrics,
             "stability_summary": {
                 "pitch_stable": is_pitch_stable,
                 "directionally_stable": is_yaw_stable,
@@ -2354,14 +2553,38 @@ class HTMLViewer:
             // For propeller aircraft: SFC_thrust = SFC_power * V / (550 * eta_prop)
             // Simplified: use 0.5-0.7 lb/hr per lb-thrust for small props
 
-            // Reference L/D from AVL data
+            // Reference L/D from AVL data + XFOIL profile drag
+            // (same calculation as the L/D plot in Polars tab)
             let LD_max = 15;  // Default estimate
-            if (avlPolar !== null) {{
-                // Find max L/D from polar data
+            const polarTraces = {json.dumps(polar_traces)};
+            if (avlPolar !== null && polarTraces.length > 0) {{
+                // Use highest Reynolds number polar (last one in list)
+                const xfoilPolar = polarTraces[polarTraces.length - 1];
+                const xfoil_cl = xfoilPolar.CL;
+                const xfoil_cd_profile = xfoilPolar.CD;
+
+                // Interpolate XFOIL profile drag at AVL CL values
                 const avl_ld = avlPolar.CL.map((cl, i) => {{
                     const cd_ind = avlPolar.CD_induced[i];
-                    const cd_total = cd_ind + 0.01;  // Add estimated profile drag
-                    return cl / cd_total;
+
+                    // Interpolate profile drag from XFOIL at this CL
+                    let cd_profile = 0.01;  // fallback
+                    if (cl <= xfoil_cl[0]) {{
+                        cd_profile = xfoil_cd_profile[0];
+                    }} else if (cl >= xfoil_cl[xfoil_cl.length - 1]) {{
+                        cd_profile = xfoil_cd_profile[xfoil_cd_profile.length - 1];
+                    }} else {{
+                        for (let j = 0; j < xfoil_cl.length - 1; j++) {{
+                            if (cl >= xfoil_cl[j] && cl <= xfoil_cl[j + 1]) {{
+                                const t = (cl - xfoil_cl[j]) / (xfoil_cl[j + 1] - xfoil_cl[j]);
+                                cd_profile = xfoil_cd_profile[j] + t * (xfoil_cd_profile[j + 1] - xfoil_cd_profile[j]);
+                                break;
+                            }}
+                        }}
+                    }}
+
+                    const cd_total = cd_ind + cd_profile;
+                    return cd_total > 0.001 ? cl / cd_total : 0;
                 }});
                 LD_max = Math.max(...avl_ld);
             }}
