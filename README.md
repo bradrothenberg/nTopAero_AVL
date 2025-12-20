@@ -48,7 +48,13 @@ Export your aircraft geometry from nTop with the following CSV files:
 ### 2. Run the Generator
 
 ```bash
-# Basic usage
+# Full build (recommended) - runs AVL + XFOIL + generates loads
+aerodeck build /path/to/ntop_export/data/ --verbose
+
+# With custom load factor (default: 6g)
+aerodeck build /path/to/ntop_export/data/ -g 4.0 --verbose
+
+# Legacy generate command (AVL only)
 aerodeck generate /path/to/ntop_export/
 
 # With custom output directory
@@ -78,9 +84,44 @@ aerodeck report ./results/{aircraft_name}_aerodeck.json
 
 ## Command Line Interface
 
+### `aerodeck build`
+
+**Recommended command** - Full pipeline that runs AVL analysis, XFOIL polar generation, and exports wing loads for FEA.
+
+```bash
+aerodeck build INPUT_DIR [OPTIONS]
+
+Options:
+  -o, --output-dir PATH    Output directory (default: ./results)
+  -g, --load-factor FLOAT  Load factor for wing loads (default: 6.0)
+  -v, --verbose            Enable verbose output
+  --aircraft-name TEXT     Aircraft name for reports
+```
+
+**Examples:**
+```bash
+# Basic build
+aerodeck build ./data/ --verbose
+
+# Custom load factor (4g instead of 6g)
+aerodeck build ./data/ -g 4.0 --verbose
+
+# Specify output directory
+aerodeck build ./data/ -o ./my_results --verbose
+```
+
+**Output files:**
+- `results/{aircraft_name}_aerodeck.json` - Full aerodynamic deck
+- `results/{aircraft_name}_aerodeck_loads.csv` - Spanwise wing loads for FEA
+- `results/polars/*.csv` - Cached XFOIL airfoil polars
+
+**Note:** XFOIL polars are cached in `results/polars/`. Subsequent runs will skip polar generation if the CSV files already exist.
+
+---
+
 ### `aerodeck generate`
 
-Generate aerodynamic deck from nTop geometry export.
+Generate aerodynamic deck from nTop geometry export (AVL only, no XFOIL).
 
 ```bash
 aerodeck generate INPUT_DIR [OPTIONS]
