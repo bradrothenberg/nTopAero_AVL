@@ -793,13 +793,13 @@ def loads(
 
         # Extract reference geometry
         ref = aerodeck_data.get('reference_geometry', {})
-        S_ref = ref.get('S_ref', 8.4)  # ft²
-        b_ref = ref.get('b_ref', 4.0)  # ft
-        c_ref = ref.get('c_ref', 2.1)  # ft
+        S_ref = ref.get('S_ref_ft2', ref.get('S_ref', 8.4))  # ft²
+        b_ref = ref.get('b_ref_ft', ref.get('b_ref', 4.0))  # ft
+        c_ref = ref.get('c_ref_ft', ref.get('c_ref', 2.1))  # ft
 
-        # Get mass for weight calculation
+        # Get mass for weight calculation (stored in lbm in aerodeck)
         mass_props = aerodeck_data.get('mass_properties', {})
-        weight_lb = mass_props.get('mass', 50.0) * 2.20462  # kg to lb
+        weight_lb = mass_props.get('mass_lbm', mass_props.get('mass', 50.0))  # Already in lbm
 
         # Get velocity - use provided or extract from aerodeck
         if velocity is None:
@@ -847,14 +847,55 @@ def loads(
         click.echo(f"  Alpha required: {alpha_required_deg:.2f}°")
 
         # Now we need to run AVL at this condition to get strip forces
-        # First, find the AVL file
+        # First, find the AVL file using aircraft name from aerodeck
         avl_dir = aerodeck_file.parent
-        avl_files = list(avl_dir.glob("*.avl"))
-        if not avl_files:
-            click.echo("Error: No AVL input file found in results directory", err=True)
-            sys.exit(1)
+        metadata = aerodeck_data.get('metadata', {})
+        aircraft_name = metadata.get('aircraft_name', '')
 
-        avl_file = avl_files[0]
+        # Try to find AVL file matching aircraft name (preserve case)
+        avl_file = None
+        tried_paths = []
+
+        if aircraft_name:
+            # Try exact aircraft name with spaces replaced by underscores (preserve case)
+            avl_filename = aircraft_name.replace(' ', '_') + '.avl'
+            potential_avl = avl_dir / avl_filename
+            tried_paths.append(str(potential_avl))
+            if potential_avl.exists():
+                avl_file = potential_avl
+            else:
+                # Try with dashes replaced too (preserve case)
+                avl_filename = aircraft_name.replace(' ', '_').replace('-', '_') + '.avl'
+                potential_avl = avl_dir / avl_filename
+                tried_paths.append(str(potential_avl))
+                if potential_avl.exists():
+                    avl_file = potential_avl
+                else:
+                    # Try lowercase version
+                    avl_filename = aircraft_name.replace(' ', '_').replace('-', '_').lower() + '.avl'
+                    potential_avl = avl_dir / avl_filename
+                    tried_paths.append(str(potential_avl))
+                    if potential_avl.exists():
+                        avl_file = potential_avl
+
+        # Fallback to finding any .avl file
+        if avl_file is None:
+            avl_files = list(avl_dir.glob("*.avl"))
+            if not avl_files:
+                click.echo(f"\nWarning: Could not find AVL file for aircraft '{aircraft_name}'", err=True)
+                click.echo(f"  Searched for:", err=True)
+                for p in tried_paths:
+                    click.echo(f"    - {p}", err=True)
+                click.echo(f"  Directory: {avl_dir}", err=True)
+                click.echo("Error: No AVL input file found in results directory", err=True)
+                sys.exit(1)
+            avl_file = avl_files[0]
+            click.echo(f"\nWarning: Could not find AVL file matching aircraft name '{aircraft_name}'")
+            click.echo(f"  Searched for:")
+            for p in tried_paths:
+                click.echo(f"    - {Path(p).name}")
+            click.echo(f"  Using fallback: {avl_file.name}")
+
         click.echo(f"\nRunning AVL at max-g condition...")
         click.echo(f"  AVL file: {avl_file.name}")
 
@@ -976,6 +1017,153 @@ def loads(
             import traceback
             traceback.print_exc()
         sys.exit(1)
+
+
+@main.command()
+@click.argument('input_dir', type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option(
+    '--output-dir', '-o',
+    type=click.Path(path_type=Path),
+    default=None,
+    help='Output directory (default: ./results)'
+)
+@click.option(
+    '--config', '-c',
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help='Configuration file (YAML)'
+)
+@click.option(
+    '--aircraft-name',
+    default='ntop_aircraft',
+    help='Aircraft name for reports'
+)
+@click.option(
+    '--load-factor', '-g',
+    default=6.0,
+    help='Load factor (g) for max-g condition (default: 6.0)'
+)
+@click.option(
+    '--velocity', '-v',
+    default=None,
+    type=float,
+    help='Velocity in mph (default: uses design cruise speed)'
+)
+@click.option(
+    '--altitude', '-alt',
+    default=20000,
+    type=float,
+    help='Altitude in feet (default: 20000)'
+)
+@click.option(
+    '--chord-percent', '-cp',
+    default=25.0,
+    type=float,
+    help='Chordwise position for load application as percent (default: 25 = quarter-chord)'
+)
+@click.option('--verbose', is_flag=True, help='Verbose output')
+def report(
+    input_dir: Path,
+    output_dir: Optional[Path],
+    config: Optional[Path],
+    aircraft_name: str,
+    load_factor: float,
+    velocity: Optional[float],
+    altitude: float,
+    chord_percent: float,
+    verbose: bool
+) -> None:
+    """
+    Generate complete aerodeck report with loads in one step.
+
+    This combines 'generate' and 'loads' commands into a single operation.
+    Generates the aerodeck JSON and exports wing loads CSV for nTop FEA.
+
+    INPUT_DIR: Directory containing nTop CSV files (mass.csv, LEpts.csv, TEpts.csv, etc.)
+
+    Examples:
+        aerodeck report Data/
+        aerodeck report Data/ --aircraft-name "My Aircraft" -g 4.5
+    """
+    import json
+    from click.testing import CliRunner
+
+    logger = get_logger(verbose=verbose)
+
+    click.echo(f"\n{'='*60}")
+    click.echo("  nTop AeroDeck Report Generator")
+    click.echo(f"{'='*60}\n")
+
+    # Setup output directory
+    if output_dir is None:
+        output_dir = Path.cwd() / "results"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ============================
+    # Step 1: Run generate command
+    # ============================
+    click.echo("Step 1: Generating aerodeck...")
+    click.echo("-" * 40)
+
+    # Build generate command args
+    generate_args = [str(input_dir), '-o', str(output_dir), '--aircraft-name', aircraft_name]
+    if config:
+        generate_args.extend(['-c', str(config)])
+    if verbose:
+        generate_args.append('-v')
+
+    # Use CliRunner to invoke generate command
+    runner = CliRunner()
+    result = runner.invoke(generate, generate_args, catch_exceptions=False)
+
+    if result.exit_code != 0:
+        click.echo(f"Error in generate step: {result.output}", err=True)
+        sys.exit(1)
+
+    click.echo(result.output)
+
+    # Find the generated aerodeck file
+    aerodeck_files = list(output_dir.glob("*_aerodeck.json"))
+    if not aerodeck_files:
+        click.echo("Error: No aerodeck JSON file generated", err=True)
+        sys.exit(1)
+
+    aerodeck_file = aerodeck_files[0]
+    click.echo(f"\n[OK] Aerodeck generated: {aerodeck_file.name}")
+
+    # ============================
+    # Step 2: Run loads command
+    # ============================
+    click.echo("\nStep 2: Generating loads...")
+    click.echo("-" * 40)
+
+    # Build loads command args
+    loads_args = [str(aerodeck_file), '-g', str(load_factor), '--altitude', str(altitude), '-c', str(chord_percent)]
+    if velocity:
+        loads_args.extend(['-v', str(velocity)])
+    if verbose:
+        loads_args.append('--verbose')
+
+    # Use CliRunner to invoke loads command
+    result = runner.invoke(loads, loads_args, catch_exceptions=False)
+
+    if result.exit_code != 0:
+        click.echo(f"Error in loads step: {result.output}", err=True)
+        sys.exit(1)
+
+    click.echo(result.output)
+
+    # ============================
+    # Summary
+    # ============================
+    click.echo(f"\n{'='*60}")
+    click.echo("  Report Generation Complete!")
+    click.echo(f"{'='*60}")
+    click.echo(f"\nOutput files in: {output_dir}")
+    click.echo(f"  - Aerodeck JSON: {aerodeck_file.name}")
+    click.echo(f"  - Loads CSV: {aerodeck_file.stem}_loads.csv")
+    click.echo(f"\n{'='*60}\n")
 
 
 if __name__ == "__main__":
