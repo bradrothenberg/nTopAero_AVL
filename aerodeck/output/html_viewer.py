@@ -170,21 +170,22 @@ class HTMLViewer:
             polars_data = self.data.get('airfoil_polars', {})
             polars_list = polars_data.get('polars', [])
 
-            # Use highest Reynolds number polar for profile drag
+            # Use highest Reynolds number polar for profile drag (last in list)
             if polars_list:
-                best_polar = max(polars_list, key=lambda p: p.get('reynolds', 0))
-                polar_alphas = best_polar.get('alpha', [])
+                best_polar = polars_list[-1]  # Match JavaScript which uses last polar
+                polar_CLs = best_polar.get('CL', [])
                 polar_CDs = best_polar.get('CD', [])
 
-                # Calculate L/D at each alpha point
+                # Calculate L/D at each AVL alpha point
+                # Interpolate XFOIL profile drag at AVL CL values (same as JavaScript)
                 ld_values = []
                 for i, alpha in enumerate(alphas):
                     if i < len(CLs) and i < len(CD_inds):
                         CL = CLs[i]
                         CD_ind = CD_inds[i]
 
-                        # Interpolate profile drag from airfoil polar
-                        CD_profile = np.interp(alpha, polar_alphas, polar_CDs) if polar_alphas else 0.01
+                        # Interpolate profile drag from airfoil polar at this CL
+                        CD_profile = np.interp(CL, polar_CLs, polar_CDs) if polar_CLs else 0.01
                         CD_total = CD_profile + CD_ind
 
                         if CD_total > 0.001:
@@ -227,34 +228,87 @@ class HTMLViewer:
                 "pitch_moment_lb_ft": round(pitch_moment_lbft, 1)
             }
 
-        # Calculate range estimate using Breguet equation
+        # Calculate range estimate using Raymer mission profile method
+        # (matches the HTML report calculation exactly)
         range_metrics = {}
         if fuel_mass_lbm > 0 and LD_max and LD_max > 0:
-            # Propeller aircraft assumptions
-            eta_prop = 0.82  # Propeller efficiency
+            # Propeller aircraft assumptions (same as HTML report)
+            eta_prop = 0.80  # Propeller efficiency
             SFC_lb_hp_hr = 0.45  # Specific fuel consumption
-            V_cruise_kts = 150  # Cruise speed
+            V_cruise_kts = 175  # Cruise speed
+            loiter_time_hr = 12.0  # Loiter endurance requirement
+            LD_loiter = LD_max * 0.9  # L/D at loiter speed
 
-            W1 = mass_lbm  # Initial weight
-            W2 = mass_lbm - fuel_mass_lbm  # Final weight (fuel burned)
+            # Mission segment fuel fractions (Raymer method)
+            ff_warmup_taxi = 0.970
+            ff_takeoff = 0.985
+            ff_climb = 0.980
+            ff_descent = 0.990
+            ff_landing = 0.995
 
-            # Breguet range: R = (eta / SFC) * (L/D) * ln(W1/W2) * 325.87
-            if W2 > 0:
-                range_nm = (eta_prop / SFC_lb_hp_hr) * LD_max * np.log(W1 / W2) * 325.87
-                range_sm = range_nm * 1.15078
-                range_km = range_nm * 1.852
+            # Reserve fuel (6% for 45 min reserve)
+            reserve_fraction = 0.06
 
-                # Endurance estimate
-                endurance_hr = range_nm / V_cruise_kts
+            W0 = mass_lbm  # MTOW
+            W_empty = mass_lbm - fuel_mass_lbm
+
+            # Calculate loiter fuel fraction for given time
+            V_loiter_kts = V_cruise_kts * 0.7
+            exponent = -loiter_time_hr * SFC_lb_hp_hr * V_loiter_kts / (eta_prop * LD_loiter * 325.87)
+            ff_loiter = np.exp(exponent)
+
+            # Weight at start of cruise (after warmup, takeoff, climb)
+            W_after_warmup = W0 * ff_warmup_taxi
+            W_after_takeoff = W_after_warmup * ff_takeoff
+            W_start_cruise = W_after_takeoff * ff_climb
+
+            # Work backwards from end of mission
+            reserve_fuel = fuel_mass_lbm * reserve_fraction
+            W_end_mission = W_empty + reserve_fuel
+            W_after_descent = W_end_mission / ff_landing
+            W_after_loiter = W_after_descent / ff_descent
+            W_after_cruise = W_after_loiter / ff_loiter
+
+            # Calculate cruise fuel fraction
+            ff_cruise = W_after_cruise / W_start_cruise if W_start_cruise > 0 else 1.0
+
+            # Calculate cruise range using Breguet
+            if W_after_cruise > 0 and W_start_cruise > W_after_cruise:
+                range_nm = (eta_prop / SFC_lb_hp_hr) * LD_max * np.log(W_start_cruise / W_after_cruise) * 325.87
+                cruise_time_hr = range_nm / V_cruise_kts
+                total_endurance_hr = cruise_time_hr + loiter_time_hr + 0.25  # +15 min for other segments
+
+                # Calculate fuel burned at each segment
+                fuel_warmup = W0 - W_after_warmup
+                fuel_takeoff = W_after_warmup - W_after_takeoff
+                fuel_climb = W_after_takeoff - W_start_cruise
+                fuel_cruise = W_start_cruise - W_after_cruise
+                fuel_loiter = W_after_cruise - W_after_loiter
+                fuel_descent = W_after_loiter - W_after_descent
+                fuel_landing = W_after_descent - W_end_mission
 
                 range_metrics = {
                     "cruise_speed_kts": V_cruise_kts,
                     "propeller_efficiency": eta_prop,
                     "SFC_lb_hp_hr": SFC_lb_hp_hr,
+                    "max_LD": round(LD_max, 1),
                     "range_nm": round(range_nm, 0),
-                    "range_statute_miles": round(range_sm, 0),
-                    "range_km": round(range_km, 0),
-                    "endurance_hr": round(endurance_hr, 1)
+                    "cruise_time_hr": round(cruise_time_hr, 1),
+                    "loiter_time_hr": loiter_time_hr,
+                    "total_endurance_hr": round(total_endurance_hr, 1),
+                    "mission_segments": [
+                        {"segment": "1. Warmup & Taxi", "W_start_lb": round(W0, 1), "W_end_lb": round(W_after_warmup, 1), "fuel_lb": round(fuel_warmup, 1), "fuel_fraction": round(ff_warmup_taxi, 3)},
+                        {"segment": "2. Takeoff", "W_start_lb": round(W_after_warmup, 1), "W_end_lb": round(W_after_takeoff, 1), "fuel_lb": round(fuel_takeoff, 1), "fuel_fraction": round(ff_takeoff, 3)},
+                        {"segment": "3. Climb", "W_start_lb": round(W_after_takeoff, 1), "W_end_lb": round(W_start_cruise, 1), "fuel_lb": round(fuel_climb, 1), "fuel_fraction": round(ff_climb, 3)},
+                        {"segment": "4. Cruise", "W_start_lb": round(W_start_cruise, 1), "W_end_lb": round(W_after_cruise, 1), "fuel_lb": round(fuel_cruise, 1), "fuel_fraction": round(ff_cruise, 3)},
+                        {"segment": f"5. Loiter ({loiter_time_hr:.0f} hr)", "W_start_lb": round(W_after_cruise, 1), "W_end_lb": round(W_after_loiter, 1), "fuel_lb": round(fuel_loiter, 1), "fuel_fraction": round(ff_loiter, 3)},
+                        {"segment": "6. Descent", "W_start_lb": round(W_after_loiter, 1), "W_end_lb": round(W_after_descent, 1), "fuel_lb": round(fuel_descent, 1), "fuel_fraction": round(ff_descent, 3)},
+                        {"segment": "7. Landing & Taxi", "W_start_lb": round(W_after_descent, 1), "W_end_lb": round(W_end_mission, 1), "fuel_lb": round(fuel_landing, 1), "fuel_fraction": round(ff_landing, 3)},
+                    ],
+                    "reserve_fuel_lb": round(reserve_fuel, 1),
+                    "total_fuel_lb": round(fuel_mass_lbm, 1),
+                    "empty_weight_lb": round(W_empty, 1),
+                    "MTOW_lb": round(W0, 1)
                 }
 
         # Stability assessment
@@ -2499,14 +2553,38 @@ class HTMLViewer:
             // For propeller aircraft: SFC_thrust = SFC_power * V / (550 * eta_prop)
             // Simplified: use 0.5-0.7 lb/hr per lb-thrust for small props
 
-            // Reference L/D from AVL data
+            // Reference L/D from AVL data + XFOIL profile drag
+            // (same calculation as the L/D plot in Polars tab)
             let LD_max = 15;  // Default estimate
-            if (avlPolar !== null) {{
-                // Find max L/D from polar data
+            const polarTraces = {json.dumps(polar_traces)};
+            if (avlPolar !== null && polarTraces.length > 0) {{
+                // Use highest Reynolds number polar (last one in list)
+                const xfoilPolar = polarTraces[polarTraces.length - 1];
+                const xfoil_cl = xfoilPolar.CL;
+                const xfoil_cd_profile = xfoilPolar.CD;
+
+                // Interpolate XFOIL profile drag at AVL CL values
                 const avl_ld = avlPolar.CL.map((cl, i) => {{
                     const cd_ind = avlPolar.CD_induced[i];
-                    const cd_total = cd_ind + 0.01;  // Add estimated profile drag
-                    return cl / cd_total;
+
+                    // Interpolate profile drag from XFOIL at this CL
+                    let cd_profile = 0.01;  // fallback
+                    if (cl <= xfoil_cl[0]) {{
+                        cd_profile = xfoil_cd_profile[0];
+                    }} else if (cl >= xfoil_cl[xfoil_cl.length - 1]) {{
+                        cd_profile = xfoil_cd_profile[xfoil_cd_profile.length - 1];
+                    }} else {{
+                        for (let j = 0; j < xfoil_cl.length - 1; j++) {{
+                            if (cl >= xfoil_cl[j] && cl <= xfoil_cl[j + 1]) {{
+                                const t = (cl - xfoil_cl[j]) / (xfoil_cl[j + 1] - xfoil_cl[j]);
+                                cd_profile = xfoil_cd_profile[j] + t * (xfoil_cd_profile[j + 1] - xfoil_cd_profile[j]);
+                                break;
+                            }}
+                        }}
+                    }}
+
+                    const cd_total = cd_ind + cd_profile;
+                    return cd_total > 0.001 ? cl / cd_total : 0;
                 }});
                 LD_max = Math.max(...avl_ld);
             }}
